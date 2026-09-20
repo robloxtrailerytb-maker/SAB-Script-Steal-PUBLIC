@@ -1,0 +1,1532 @@
+-- =====================================================
+-- AnimalTracker (paramètres auto pour tout le monde)
+-- =====================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local PathfindingService = game:GetService("PathfindingService")
+local TeleportService = game:GetService("TeleportService")
+local SoundService = game:GetService("SoundService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+
+-- ====================== STATE ======================
+local highlightEnabled = false
+local beamEnabled = false
+local fpsBoostEnabled = false
+local autoKickEnabled = false
+local infiniteJumpEnabled = false
+local autoFoncerEnabled = false
+local showBaseOwnerEnabled = false
+local autoLockBaseEnabled = false
+local disableAnimsEnabled = false
+local currentSpeedLock = nil
+local customFOV = 70
+local otherPlayersCount = #Players:GetPlayers() - 1
+local lastAbsoluteBestValue = 0
+
+local currentHighlights = {}
+local currentBeam = nil
+local currentAttachments = {}
+local lastBestName = nil
+local lastBestGenText = nil
+local lastBestModels = {}
+local savedData = {}
+local JumpConnection = nil
+local SpeedConnection = nil
+local lastCloakTime = 0
+local pathVisuals = {}
+local isRushing = false
+local lastRushTime = 0
+local isLockingBase = false
+local lastLockBaseTime = 0
+local cachedPlotBlocks = {}
+local lastPlotCacheTime = 0
+local baseOwnerHighlight = nil
+local baseOwnerBillboard = nil
+local lastBaseOwnerUserId = nil
+local animalsListCache = {}
+local minFilterValue = 0
+
+-- Son nouveau meilleur animal
+local newBestSound = Instance.new("Sound")
+newBestSound.SoundId = "rbxassetid://101969970998775"
+newBestSound.Volume = 1
+newBestSound.Parent = SoundService
+
+player.CharacterAdded:Connect(function(char)
+	character = char
+	humanoid = char:WaitForChild("Humanoid")
+	humanoidRootPart = char:WaitForChild("HumanoidRootPart")
+	if currentSpeedLock then
+		task.wait(0.3)
+		setSpeedLock(currentSpeedLock)
+	end
+	if infiniteJumpEnabled then
+		task.wait(0.3)
+		setInfiniteJump(true)
+	end
+end)
+
+-- ====================== GUI ======================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AnimalTracker"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
+
+local fpsLabel = Instance.new("TextLabel")
+fpsLabel.Size = UDim2.new(0, 90, 0, 28)
+fpsLabel.Position = UDim2.new(1, -100, 0, 12)
+fpsLabel.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+fpsLabel.BackgroundTransparency = 0.2
+fpsLabel.Text = "FPS: --"
+fpsLabel.TextColor3 = Color3.fromRGB(0, 255, 150)
+fpsLabel.TextSize = 16
+fpsLabel.Font = Enum.Font.GothamBold
+fpsLabel.ZIndex = 50
+fpsLabel.Parent = screenGui
+Instance.new("UICorner", fpsLabel).CornerRadius = UDim.new(0, 8)
+
+local mainGui = Instance.new("Frame")
+mainGui.Size = UDim2.new(0, 400, 0, 100)
+mainGui.Position = UDim2.new(0.5, -200, 0, 12)
+mainGui.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+mainGui.BackgroundTransparency = 0.1
+mainGui.BorderSizePixel = 0
+mainGui.ZIndex = 5
+mainGui.Parent = screenGui
+Instance.new("UICorner", mainGui).CornerRadius = UDim.new(0, 12)
+local mainStroke = Instance.new("UIStroke", mainGui)
+mainStroke.Color = Color3.fromRGB(0, 0, 0)
+mainStroke.Thickness = 2
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -140, 0, 26)
+titleLabel.Position = UDim2.new(0, 14, 0, 8)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Meilleur Animal"
+titleLabel.TextColor3 = Color3.fromRGB(160, 160, 160)
+titleLabel.TextSize = 14
+titleLabel.Font = Enum.Font.Gotham
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = mainGui
+
+local nameLabel = Instance.new("TextLabel")
+nameLabel.Size = UDim2.new(1, -20, 0, 30)
+nameLabel.Position = UDim2.new(0, 14, 0, 32)
+nameLabel.BackgroundTransparency = 1
+nameLabel.Text = "Aucun trouvé..."
+nameLabel.TextColor3 = Color3.new(1, 1, 1)
+nameLabel.TextSize = 20
+nameLabel.Font = Enum.Font.GothamBold
+nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+nameLabel.Parent = mainGui
+
+local genLabel = Instance.new("TextLabel")
+genLabel.Size = UDim2.new(1, -20, 0, 24)
+genLabel.Position = UDim2.new(0, 14, 0, 62)
+genLabel.BackgroundTransparency = 1
+genLabel.Text = "Generation: -"
+genLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+genLabel.TextSize = 16
+genLabel.Font = Enum.Font.Gotham
+genLabel.TextXAlignment = Enum.TextXAlignment.Left
+genLabel.Parent = mainGui
+
+local animalsBtn = Instance.new("TextButton")
+animalsBtn.Size = UDim2.new(0, 70, 0, 28)
+animalsBtn.Position = UDim2.new(1, -145, 0, 8)
+animalsBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+animalsBtn.Text = "Animals"
+animalsBtn.TextSize = 13
+animalsBtn.Font = Enum.Font.GothamBold
+animalsBtn.TextColor3 = Color3.new(1, 1, 1)
+animalsBtn.Parent = mainGui
+Instance.new("UICorner", animalsBtn).CornerRadius = UDim.new(0, 8)
+
+local settingsBtn = Instance.new("TextButton")
+settingsBtn.Size = UDim2.new(0, 55, 0, 28)
+settingsBtn.Position = UDim2.new(1, -65, 0, 8)
+settingsBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+settingsBtn.Text = "⚙️"
+settingsBtn.TextSize = 16
+settingsBtn.Font = Enum.Font.GothamBold
+settingsBtn.TextColor3 = Color3.new(1, 1, 1)
+settingsBtn.Parent = mainGui
+Instance.new("UICorner", settingsBtn).CornerRadius = UDim.new(0, 8)
+
+-- ====================== SETTINGS FRAME ======================
+local settingsFrame = Instance.new("Frame")
+settingsFrame.Size = UDim2.new(0, 300, 0, 660)
+settingsFrame.Position = UDim2.new(0.5, -150, 0, 110)
+settingsFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+settingsFrame.BorderSizePixel = 0
+settingsFrame.Visible = false
+settingsFrame.ZIndex = 10
+settingsFrame.Parent = screenGui
+Instance.new("UICorner", settingsFrame).CornerRadius = UDim.new(0, 12)
+local settingsStroke = Instance.new("UIStroke", settingsFrame)
+settingsStroke.Color = Color3.fromRGB(0, 0, 0)
+settingsStroke.Thickness = 2
+
+local settingsTitle = Instance.new("TextLabel")
+settingsTitle.Size = UDim2.new(1, 0, 0, 35)
+settingsTitle.BackgroundTransparency = 1
+settingsTitle.Text = "Paramètres (glisser ici)"
+settingsTitle.TextColor3 = Color3.new(1, 1, 1)
+settingsTitle.TextSize = 18
+settingsTitle.Font = Enum.Font.GothamBold
+settingsTitle.Parent = settingsFrame
+
+local themes = {
+	{Name = "Sombre", Bg = Color3.fromRGB(18, 18, 22), Accent = Color3.fromRGB(0, 0, 0), Text = Color3.new(1,1,1)},
+	{Name = "Clair", Bg = Color3.fromRGB(240, 240, 245), Accent = Color3.fromRGB(0, 120, 255), Text = Color3.fromRGB(20,20,20)},
+	{Name = "Bleu", Bg = Color3.fromRGB(15, 25, 45), Accent = Color3.fromRGB(0, 170, 255), Text = Color3.new(1,1,1)},
+	{Name = "Rouge", Bg = Color3.fromRGB(35, 15, 15), Accent = Color3.fromRGB(255, 60, 60), Text = Color3.new(1,1,1)},
+	{Name = "Vert", Bg = Color3.fromRGB(15, 30, 20), Accent = Color3.fromRGB(50, 255, 100), Text = Color3.new(1,1,1)},
+}
+local currentTheme = themes[1]
+
+local themeButtons = {}
+for i, theme in ipairs(themes) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0, 52, 0, 28)
+	btn.Position = UDim2.new(0, 10 + (i-1)*56, 0, 42)
+	btn.BackgroundColor3 = theme.Bg
+	btn.Text = theme.Name
+	btn.TextSize = 11
+	btn.Font = Enum.Font.Gotham
+	btn.TextColor3 = theme.Text
+	btn.Parent = settingsFrame
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+	local s = Instance.new("UIStroke", btn)
+	s.Color = theme.Accent
+	s.Thickness = 1.5
+	themeButtons[i] = btn
+end
+
+local function createToggle(name, yPos)
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.65, 0, 0, 28)
+	label.Position = UDim2.new(0, 12, 0, yPos)
+	label.BackgroundTransparency = 1
+	label.Text = name
+	label.TextColor3 = Color3.fromRGB(200, 200, 200)
+	label.TextSize = 14
+	label.Font = Enum.Font.Gotham
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = settingsFrame
+
+	local toggle = Instance.new("TextButton")
+	toggle.Size = UDim2.new(0, 60, 0, 26)
+	toggle.Position = UDim2.new(1, -75, 0, yPos + 1)
+	toggle.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+	toggle.Text = "OFF"
+	toggle.TextColor3 = Color3.new(1, 1, 1)
+	toggle.TextSize = 13
+	toggle.Font = Enum.Font.GothamBold
+	toggle.Parent = settingsFrame
+	Instance.new("UICorner", toggle).CornerRadius = UDim.new(0, 6)
+	return toggle
+end
+
+local highlightToggle = createToggle("Highlight", 85)
+local beamToggle = createToggle("Beam (trait)", 123)
+local fpsBoostToggle = createToggle("FPS Booster", 161)
+local autoKickToggle = createToggle("AutoKick (Steal)", 199)
+local infiniteJumpToggle = createToggle("Infinite Jump", 237)
+local autoFoncerToggle = createToggle("Auto Foncer", 275)
+local showBaseOwnerToggle = createToggle("Show Base Owner", 313)
+local autoLockBaseToggle = createToggle("Auto Lock Base", 351)
+local disableAnimsToggle = createToggle("Disable Anims", 389)
+
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(0.4, 0, 0, 28)
+speedLabel.Position = UDim2.new(0, 12, 0, 427)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Speed :"
+speedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+speedLabel.TextSize = 14
+speedLabel.Font = Enum.Font.Gotham
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+speedLabel.Parent = settingsFrame
+
+local speedBox = Instance.new("TextBox")
+speedBox.Size = UDim2.new(0, 55, 0, 26)
+speedBox.Position = UDim2.new(0, 70, 0, 428)
+speedBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+speedBox.Text = "22"
+speedBox.TextColor3 = Color3.new(1, 1, 1)
+speedBox.TextSize = 14
+speedBox.Font = Enum.Font.GothamBold
+speedBox.ClearTextOnFocus = false
+speedBox.Parent = settingsFrame
+Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 6)
+
+local speedLockToggle = Instance.new("TextButton")
+speedLockToggle.Size = UDim2.new(0, 60, 0, 26)
+speedLockToggle.Position = UDim2.new(1, -75, 0, 428)
+speedLockToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+speedLockToggle.Text = "OFF"
+speedLockToggle.TextColor3 = Color3.new(1, 1, 1)
+speedLockToggle.TextSize = 13
+speedLockToggle.Font = Enum.Font.GothamBold
+speedLockToggle.Parent = settingsFrame
+Instance.new("UICorner", speedLockToggle).CornerRadius = UDim.new(0, 6)
+
+local fovLabel = Instance.new("TextLabel")
+fovLabel.Size = UDim2.new(0.4, 0, 0, 28)
+fovLabel.Position = UDim2.new(0, 12, 0, 466)
+fovLabel.BackgroundTransparency = 1
+fovLabel.Text = "FOV :"
+fovLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+fovLabel.TextSize = 14
+fovLabel.Font = Enum.Font.Gotham
+fovLabel.TextXAlignment = Enum.TextXAlignment.Left
+fovLabel.Parent = settingsFrame
+
+local fovBox = Instance.new("TextBox")
+fovBox.Size = UDim2.new(0, 55, 0, 26)
+fovBox.Position = UDim2.new(0, 70, 0, 467)
+fovBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+fovBox.Text = "70"
+fovBox.TextColor3 = Color3.new(1, 1, 1)
+fovBox.TextSize = 14
+fovBox.Font = Enum.Font.GothamBold
+fovBox.ClearTextOnFocus = false
+fovBox.Parent = settingsFrame
+Instance.new("UICorner", fovBox).CornerRadius = UDim.new(0, 6)
+
+local fovApplyBtn = Instance.new("TextButton")
+fovApplyBtn.Size = UDim2.new(0, 60, 0, 26)
+fovApplyBtn.Position = UDim2.new(1, -75, 0, 467)
+fovApplyBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+fovApplyBtn.Text = "Apply"
+fovApplyBtn.TextColor3 = Color3.new(1, 1, 1)
+fovApplyBtn.TextSize = 13
+fovApplyBtn.Font = Enum.Font.GothamBold
+fovApplyBtn.Parent = settingsFrame
+Instance.new("UICorner", fovApplyBtn).CornerRadius = UDim.new(0, 6)
+
+local rejoinBtn = Instance.new("TextButton")
+rejoinBtn.Size = UDim2.new(0.85, 0, 0, 32)
+rejoinBtn.Position = UDim2.new(0.075, 0, 0, 515)
+rejoinBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+rejoinBtn.Text = "Rejoindre un serveur"
+rejoinBtn.TextColor3 = Color3.new(1, 1, 1)
+rejoinBtn.TextSize = 14
+rejoinBtn.Font = Enum.Font.GothamBold
+rejoinBtn.Parent = settingsFrame
+Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 8)
+
+local detachBtn = Instance.new("TextButton")
+detachBtn.Size = UDim2.new(0.85, 0, 0, 32)
+detachBtn.Position = UDim2.new(0.075, 0, 0, 557)
+detachBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+detachBtn.Text = "Détacher Script"
+detachBtn.TextColor3 = Color3.new(1, 1, 1)
+detachBtn.TextSize = 15
+detachBtn.Font = Enum.Font.GothamBold
+detachBtn.Parent = settingsFrame
+Instance.new("UICorner", detachBtn).CornerRadius = UDim.new(0, 8)
+
+local closeSettings = Instance.new("TextButton")
+closeSettings.Size = UDim2.new(0.85, 0, 0, 32)
+closeSettings.Position = UDim2.new(0.075, 0, 1, -42)
+closeSettings.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+closeSettings.Text = "Fermer"
+closeSettings.TextColor3 = Color3.new(1, 1, 1)
+closeSettings.TextSize = 15
+closeSettings.Font = Enum.Font.GothamBold
+closeSettings.Parent = settingsFrame
+Instance.new("UICorner", closeSettings).CornerRadius = UDim.new(0, 8)
+
+-- ====================== ANIMALS FRAME ======================
+local animalsFrame = Instance.new("Frame")
+animalsFrame.Size = UDim2.new(0, 420, 0, 520)
+animalsFrame.Position = UDim2.new(0.5, -210, 0, 110)
+animalsFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+animalsFrame.BorderSizePixel = 0
+animalsFrame.Visible = false
+animalsFrame.ZIndex = 15
+animalsFrame.Parent = screenGui
+Instance.new("UICorner", animalsFrame).CornerRadius = UDim.new(0, 12)
+local animalsStroke = Instance.new("UIStroke", animalsFrame)
+animalsStroke.Color = Color3.fromRGB(0, 0, 0)
+animalsStroke.Thickness = 2
+
+local animalsTitle = Instance.new("TextLabel")
+animalsTitle.Size = UDim2.new(1, -20, 0, 32)
+animalsTitle.Position = UDim2.new(0, 12, 0, 6)
+animalsTitle.BackgroundTransparency = 1
+animalsTitle.Text = "Animals du serveur (glisser ici)"
+animalsTitle.TextColor3 = Color3.new(1, 1, 1)
+animalsTitle.TextSize = 18
+animalsTitle.Font = Enum.Font.GothamBold
+animalsTitle.TextXAlignment = Enum.TextXAlignment.Left
+animalsTitle.Parent = animalsFrame
+
+local filterLabel = Instance.new("TextLabel")
+filterLabel.Size = UDim2.new(0, 80, 0, 24)
+filterLabel.Position = UDim2.new(0, 12, 0, 42)
+filterLabel.BackgroundTransparency = 1
+filterLabel.Text = "Min Gen :"
+filterLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+filterLabel.TextSize = 13
+filterLabel.Font = Enum.Font.Gotham
+filterLabel.TextXAlignment = Enum.TextXAlignment.Left
+filterLabel.Parent = animalsFrame
+
+local filterBox = Instance.new("TextBox")
+filterBox.Size = UDim2.new(0, 90, 0, 26)
+filterBox.Position = UDim2.new(0, 90, 0, 41)
+filterBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+filterBox.Text = "0"
+filterBox.PlaceholderText = "20M / 1B..."
+filterBox.TextColor3 = Color3.new(1, 1, 1)
+filterBox.TextSize = 13
+filterBox.Font = Enum.Font.GothamBold
+filterBox.ClearTextOnFocus = false
+filterBox.Parent = animalsFrame
+Instance.new("UICorner", filterBox).CornerRadius = UDim.new(0, 6)
+
+local filterApplyBtn = Instance.new("TextButton")
+filterApplyBtn.Size = UDim2.new(0, 60, 0, 26)
+filterApplyBtn.Position = UDim2.new(0, 190, 0, 41)
+filterApplyBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+filterApplyBtn.Text = "Filtrer"
+filterApplyBtn.TextColor3 = Color3.new(1, 1, 1)
+filterApplyBtn.TextSize = 13
+filterApplyBtn.Font = Enum.Font.GothamBold
+filterApplyBtn.Parent = animalsFrame
+Instance.new("UICorner", filterApplyBtn).CornerRadius = UDim.new(0, 6)
+
+local animalsScroll = Instance.new("ScrollingFrame")
+animalsScroll.Size = UDim2.new(1, -20, 1, -120)
+animalsScroll.Position = UDim2.new(0, 10, 0, 78)
+animalsScroll.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+animalsScroll.BorderSizePixel = 0
+animalsScroll.ScrollBarThickness = 6
+animalsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+animalsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+animalsScroll.Parent = animalsFrame
+Instance.new("UICorner", animalsScroll).CornerRadius = UDim.new(0, 8)
+
+local animalsListLayout = Instance.new("UIListLayout")
+animalsListLayout.Padding = UDim.new(0, 6)
+animalsListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+animalsListLayout.Parent = animalsScroll
+
+local closeAnimals = Instance.new("TextButton")
+closeAnimals.Size = UDim2.new(0.9, 0, 0, 32)
+closeAnimals.Position = UDim2.new(0.05, 0, 1, -42)
+closeAnimals.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+closeAnimals.Text = "Fermer"
+closeAnimals.TextColor3 = Color3.new(1, 1, 1)
+closeAnimals.TextSize = 15
+closeAnimals.Font = Enum.Font.GothamBold
+closeAnimals.Parent = animalsFrame
+Instance.new("UICorner", closeAnimals).CornerRadius = UDim.new(0, 8)
+
+-- ====================== DRAG ======================
+local function makeDraggable(title, frame)
+	local dragging, dragStart, startPos = false, nil, nil
+	title.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+		end
+	end)
+	title.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+end
+
+makeDraggable(settingsTitle, settingsFrame)
+makeDraggable(animalsTitle, animalsFrame)
+
+-- ====================== HELPERS ======================
+local function setToggleVisual(toggle, state)
+	toggle.Text = state and "ON" or "OFF"
+	toggle.BackgroundColor3 = state and Color3.fromRGB(0,180,80) or Color3.fromRGB(50,50,60)
+end
+
+local function applyTheme(theme)
+	currentTheme = theme
+	mainGui.BackgroundColor3 = theme.Bg
+	mainStroke.Color = theme.Accent
+	titleLabel.TextColor3 = theme.Text:Lerp(Color3.new(0.5,0.5,0.5), 0.4)
+	nameLabel.TextColor3 = theme.Text
+	genLabel.TextColor3 = (theme.Accent == Color3.fromRGB(0,0,0)) and Color3.fromRGB(200,200,200) or theme.Accent
+	settingsFrame.BackgroundColor3 = theme.Bg
+	settingsStroke.Color = theme.Accent
+	settingsTitle.TextColor3 = theme.Text
+	settingsBtn.BackgroundColor3 = theme.Bg:Lerp(Color3.new(0.2,0.2,0.2), 0.3)
+	animalsBtn.BackgroundColor3 = theme.Bg:Lerp(Color3.new(0.2,0.2,0.2), 0.3)
+	fpsLabel.BackgroundColor3 = theme.Bg
+	fpsLabel.TextColor3 = (theme.Accent == Color3.fromRGB(0,0,0)) and Color3.fromRGB(0,255,150) or theme.Accent
+	animalsFrame.BackgroundColor3 = theme.Bg
+	animalsStroke.Color = theme.Accent
+end
+
+local function parseGeneration(text)
+	if not text or text == "" then return 0 end
+	text = text:gsub("/s", ""):gsub("%s+", ""):upper()
+	local number, suffix = text:match("([%d%.]+)([KMBTQDN]*)")
+	if not number then return 0 end
+	number = tonumber(number) or 0
+	local mult = { [""]=1, K=1e3, M=1e6, B=1e9, T=1e12, Q=1e15, QD=1e15, QN=1e18, D=1e33, N=1e30 }
+	return number * (mult[suffix] or 1)
+end
+
+local function getBaseOwnerDisplayName(fromObj)
+	local current = fromObj
+	for _ = 1, 12 do
+		if not current then break end
+		local plotSign = current:FindFirstChild("PlotSign")
+		if plotSign then
+			local gui = plotSign:FindFirstChild("SurfaceGui")
+			local frame = gui and gui:FindFirstChild("Frame")
+			local label = frame and frame:FindFirstChild("TextLabel")
+			if label and label:IsA("TextLabel") then
+				local dn = (label.Text or ""):match("^(.+)'s Base$")
+				if dn then return dn:gsub("^%s+", ""):gsub("%s+$", "") end
+			end
+		end
+		current = current.Parent
+	end
+	return nil
+end
+
+local function isOwnedByLocalPlayer(obj)
+	local dn = getBaseOwnerDisplayName(obj)
+	return dn and (dn == player.DisplayName or dn == player.Name)
+end
+
+local function findModelsInPlots(name)
+	local results = {}
+	local plots = workspace:FindFirstChild("Plots")
+	if not plots or not name then return results end
+	local function recurse(parent)
+		for _, child in ipairs(parent:GetChildren()) do
+			if child:IsA("Model") and child.Name == name then
+				table.insert(results, child)
+			end
+			if #child:GetChildren() > 0 then recurse(child) end
+		end
+	end
+	recurse(plots)
+	return results
+end
+
+local function getGenerationForName(name)
+	local debris = workspace:FindFirstChild("Debris")
+	if not debris then return 0, "-" end
+	for _, template in ipairs(debris:GetChildren()) do
+		if template.Name == "FastOverheadTemplate" then
+			local ao = template:FindFirstChild("AnimalOverhead")
+			if ao then
+				local dn = ao:FindFirstChild("DisplayName")
+				local gen = ao:FindFirstChild("Generation")
+				if dn and dn:IsA("TextLabel") and dn.Text == name and gen and gen:IsA("TextLabel") then
+					return parseGeneration(gen.Text), gen.Text
+				end
+			end
+		end
+	end
+	return 0, "-"
+end
+
+local function findBestFromDebris()
+	local debris = workspace:FindFirstChild("Debris")
+	if not debris then return nil, nil, nil, 0 end
+	local candidates = {}
+	for _, template in ipairs(debris:GetChildren()) do
+		if template.Name == "FastOverheadTemplate" then
+			local ao = template:FindFirstChild("AnimalOverhead")
+			if ao then
+				local gen = ao:FindFirstChild("Generation")
+				local dn = ao:FindFirstChild("DisplayName")
+				if gen and gen:IsA("TextLabel") and dn and dn:IsA("TextLabel") then
+					table.insert(candidates, {Name = dn.Text, GenText = gen.Text, Value = parseGeneration(gen.Text)})
+				end
+			end
+		end
+	end
+	table.sort(candidates, function(a,b) return a.Value > b.Value end)
+	for _, c in ipairs(candidates) do
+		local models = findModelsInPlots(c.Name)
+		if #models > 0 then
+			local ours = false
+			for _, m in ipairs(models) do
+				if isOwnedByLocalPlayer(m) then ours = true break end
+			end
+			if not ours then return c.Name, c.GenText, models, c.Value end
+		end
+	end
+	return nil, nil, nil, 0
+end
+
+local function clearVisuals()
+	for _, h in ipairs(currentHighlights) do if h and h.Parent then h:Destroy() end end
+	currentHighlights = {}
+	if currentBeam and currentBeam.Parent then currentBeam:Destroy() end
+	currentBeam = nil
+	for _, a in ipairs(currentAttachments) do if a and a.Parent then a:Destroy() end end
+	currentAttachments = {}
+end
+
+local function updateVisuals(models)
+	clearVisuals()
+	if not models or #models == 0 then return end
+	if highlightEnabled then
+		local col = (currentTheme.Accent == Color3.fromRGB(0,0,0)) and Color3.fromRGB(255,255,255) or currentTheme.Accent
+		for _, model in ipairs(models) do
+			local h = Instance.new("Highlight")
+			h.Adornee = model
+			h.FillColor = col
+			h.OutlineColor = col
+			h.FillTransparency = 0.65
+			h.OutlineTransparency = 0
+			h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			h.Parent = model
+			table.insert(currentHighlights, h)
+		end
+	end
+	if beamEnabled and humanoidRootPart then
+		local part = models[1].PrimaryPart or models[1]:FindFirstChildWhichIsA("BasePart")
+		if part then
+			local a0 = Instance.new("Attachment", humanoidRootPart)
+			local a1 = Instance.new("Attachment", part)
+			table.insert(currentAttachments, a0)
+			table.insert(currentAttachments, a1)
+			local beam = Instance.new("Beam")
+			beam.Attachment0 = a0
+			beam.Attachment1 = a1
+			local col = (currentTheme.Accent == Color3.fromRGB(0,0,0)) and Color3.fromRGB(255,255,255) or currentTheme.Accent
+			beam.Color = ColorSequence.new(col)
+			beam.Width0 = 0.25
+			beam.Width1 = 0.25
+			beam.FaceCamera = true
+			beam.LightEmission = 0.6
+			beam.Transparency = NumberSequence.new(0.25)
+			beam.Parent = humanoidRootPart
+			currentBeam = beam
+		end
+	end
+end
+
+local function clearBaseOwnerVisuals()
+	if baseOwnerHighlight and baseOwnerHighlight.Parent then baseOwnerHighlight:Destroy() end
+	baseOwnerHighlight = nil
+	if baseOwnerBillboard and baseOwnerBillboard.Parent then baseOwnerBillboard:Destroy() end
+	baseOwnerBillboard = nil
+	lastBaseOwnerUserId = nil
+end
+
+local function applyBaseOwnerHighlight(ownerPlayer)
+	clearBaseOwnerVisuals()
+	if not ownerPlayer or not showBaseOwnerEnabled then return end
+	local char = ownerPlayer.Character
+	if not char then return end
+	local root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+	if not root then return end
+
+	baseOwnerHighlight = Instance.new("Highlight")
+	baseOwnerHighlight.Adornee = char
+	baseOwnerHighlight.FillColor = Color3.fromRGB(255, 40, 40)
+	baseOwnerHighlight.OutlineColor = Color3.fromRGB(255, 80, 80)
+	baseOwnerHighlight.FillTransparency = 0.55
+	baseOwnerHighlight.OutlineTransparency = 0
+	baseOwnerHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	baseOwnerHighlight.Parent = char
+
+	baseOwnerBillboard = Instance.new("BillboardGui")
+	baseOwnerBillboard.Adornee = root
+	baseOwnerBillboard.Size = UDim2.new(0, 140, 0, 40)
+	baseOwnerBillboard.StudsOffset = Vector3.new(0, 3.2, 0)
+	baseOwnerBillboard.AlwaysOnTop = true
+	baseOwnerBillboard.Parent = root
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
+	label.BackgroundTransparency = 0.25
+	label.Text = "BASE OWNER"
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextSize = 16
+	label.Font = Enum.Font.GothamBold
+	label.Parent = baseOwnerBillboard
+	Instance.new("UICorner", label).CornerRadius = UDim.new(0, 8)
+
+	lastBaseOwnerUserId = ownerPlayer.UserId
+end
+
+-- ========== DISABLE ANIMATIONS ==========
+local function disableAllAnimalAnimations()
+	if not disableAnimsEnabled then return end
+	local plots = workspace:FindFirstChild("Plots")
+	if not plots then return end
+
+	for _, obj in ipairs(plots:GetDescendants()) do
+		if obj:IsA("Model") then
+			-- Cherche Animator (direct ou dans Humanoid / AnimationController)
+			local animator = obj:FindFirstChildOfClass("Animator")
+			if not animator then
+				local hum = obj:FindFirstChildOfClass("Humanoid")
+				if hum then animator = hum:FindFirstChildOfClass("Animator") end
+			end
+			if not animator then
+				local ac = obj:FindFirstChildOfClass("AnimationController")
+				if ac then animator = ac:FindFirstChildOfClass("Animator") end
+			end
+
+			if animator then
+				for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+					pcall(function() track:Stop(0) end)
+				end
+			end
+		end
+	end
+end
+
+local function updateAll()
+	local absName, absGenText, absModels, absValue = findBestFromDebris()
+
+	-- Son vraiment à chaque changement de meilleur animal (nom différent)
+	if absName and absName ~= lastBestName and absValue > 0 then
+		pcall(function()
+			newBestSound:Play()
+		end)
+	end
+	if absValue > 0 then
+		lastAbsoluteBestValue = math.max(lastAbsoluteBestValue, absValue)
+	end
+
+	local useName, useGenText, useModels = absName, absGenText, absModels
+
+	if useName then
+		nameLabel.Text = useName
+		genLabel.Text = "Generation: " .. (useGenText or "-")
+	else
+		nameLabel.Text = "Aucun trouvé..."
+		genLabel.Text = "Generation: -"
+	end
+
+	if useName ~= lastBestName or useGenText ~= lastBestGenText then
+		lastBestName = useName
+		lastBestGenText = useGenText
+		lastBestModels = useModels or {}
+		updateVisuals(lastBestModels)
+	elseif useName and (#lastBestModels == 0 or not lastBestModels[1] or not lastBestModels[1].Parent) then
+		lastBestModels = findModelsInPlots(useName)
+		updateVisuals(lastBestModels)
+	end
+
+	if showBaseOwnerEnabled and lastBestModels[1] then
+		local dn = getBaseOwnerDisplayName(lastBestModels[1])
+		if dn then
+			local owner
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr.DisplayName == dn or plr.Name == dn then owner = plr break end
+			end
+			if owner and owner.UserId ~= lastBaseOwnerUserId then
+				applyBaseOwnerHighlight(owner)
+			elseif not owner then
+				clearBaseOwnerVisuals()
+			end
+		else
+			clearBaseOwnerVisuals()
+		end
+	else
+		clearBaseOwnerVisuals()
+	end
+end
+
+-- ====================== ANIMALS LIST ======================
+local function setupViewport(viewport, model)
+	for _, child in ipairs(viewport:GetChildren()) do
+		child:Destroy()
+	end
+
+	local worldModel = Instance.new("WorldModel")
+	worldModel.Parent = viewport
+
+	local clone = model:Clone()
+	for _, desc in ipairs(clone:GetDescendants()) do
+		if desc:IsA("Script") or desc:IsA("LocalScript") or desc:IsA("Sound") or desc:IsA("ProximityPrompt") then
+			desc:Destroy()
+		end
+	end
+	clone.Parent = worldModel
+
+	local cam = Instance.new("Camera")
+	cam.Parent = viewport
+	viewport.CurrentCamera = cam
+
+	local ok, cf, size = pcall(function()
+		return clone:GetBoundingBox()
+	end)
+	if ok and cf and size then
+		local maxDim = math.max(size.X, size.Y, size.Z)
+		cam.CFrame = cf * CFrame.new(0, size.Y * 0.15, maxDim * 1.6)
+		cam.FieldOfView = 40
+	else
+		local part = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart")
+		if part then
+			cam.CFrame = part.CFrame * CFrame.new(0, 2, 8)
+		end
+	end
+end
+
+local function refreshAnimalsList()
+	for _, child in ipairs(animalsScroll:GetChildren()) do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+
+	local debris = workspace:FindFirstChild("Debris")
+	if not debris then return end
+
+	local candidates = {}
+	local seen = {}
+
+	for _, template in ipairs(debris:GetChildren()) do
+		if template.Name == "FastOverheadTemplate" then
+			local ao = template:FindFirstChild("AnimalOverhead")
+			if ao then
+				local gen = ao:FindFirstChild("Generation")
+				local dn = ao:FindFirstChild("DisplayName")
+				if gen and gen:IsA("TextLabel") and dn and dn:IsA("TextLabel") then
+					local name = dn.Text
+					local val = parseGeneration(gen.Text)
+					if val >= minFilterValue and not seen[name] then
+						seen[name] = true
+						local models = findModelsInPlots(name)
+						local hasStealable = false
+						for _, m in ipairs(models) do
+							if not isOwnedByLocalPlayer(m) then
+								hasStealable = true
+								break
+							end
+						end
+						if hasStealable and #models > 0 then
+							local ownerName = nil
+							for _, m in ipairs(models) do
+								if not isOwnedByLocalPlayer(m) then
+									ownerName = getBaseOwnerDisplayName(m)
+									if ownerName then break end
+								end
+							end
+							table.insert(candidates, {
+								Name = name,
+								GenText = gen.Text,
+								Value = val,
+								Models = models,
+								OwnerName = ownerName
+							})
+						end
+					end
+				end
+			end
+		end
+	end
+
+	table.sort(candidates, function(a, b) return a.Value > b.Value end)
+	animalsListCache = candidates
+
+	for i, data in ipairs(candidates) do
+		local entry = Instance.new("Frame")
+		entry.Size = UDim2.new(1, -10, 0, 72)
+		entry.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+		entry.BorderSizePixel = 0
+		entry.LayoutOrder = i
+		entry.Parent = animalsScroll
+		Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 8)
+
+		local vp = Instance.new("ViewportFrame")
+		vp.Size = UDim2.new(0, 64, 0, 64)
+		vp.Position = UDim2.new(0, 4, 0, 4)
+		vp.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+		vp.BorderSizePixel = 0
+		vp.Parent = entry
+		Instance.new("UICorner", vp).CornerRadius = UDim.new(0, 6)
+
+		if data.Models[1] then
+			task.spawn(function()
+				setupViewport(vp, data.Models[1])
+			end)
+		end
+
+		local nameLbl = Instance.new("TextLabel")
+		nameLbl.Size = UDim2.new(1, -120, 0, 24)
+		nameLbl.Position = UDim2.new(0, 76, 0, 4)
+		nameLbl.BackgroundTransparency = 1
+		nameLbl.Text = data.Name
+		nameLbl.TextColor3 = Color3.new(1, 1, 1)
+		nameLbl.TextSize = 15
+		nameLbl.Font = Enum.Font.GothamBold
+		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		nameLbl.Parent = entry
+
+		local genLbl = Instance.new("TextLabel")
+		genLbl.Size = UDim2.new(1, -120, 0, 18)
+		genLbl.Position = UDim2.new(0, 76, 0, 26)
+		genLbl.BackgroundTransparency = 1
+		genLbl.Text = data.GenText
+		genLbl.TextColor3 = Color3.fromRGB(0, 220, 120)
+		genLbl.TextSize = 13
+		genLbl.Font = Enum.Font.Gotham
+		genLbl.TextXAlignment = Enum.TextXAlignment.Left
+		genLbl.Parent = entry
+
+		-- Avatar + pseudo du proprio
+		local ownerFrame = Instance.new("Frame")
+		ownerFrame.Size = UDim2.new(1, -86, 0, 22)
+		ownerFrame.Position = UDim2.new(0, 76, 0, 46)
+		ownerFrame.BackgroundTransparency = 1
+		ownerFrame.Parent = entry
+
+		local avatarImg = Instance.new("ImageLabel")
+		avatarImg.Size = UDim2.new(0, 20, 0, 20)
+		avatarImg.Position = UDim2.new(0, 0, 0, 1)
+		avatarImg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+		avatarImg.BorderSizePixel = 0
+		avatarImg.Image = ""
+		avatarImg.Parent = ownerFrame
+		Instance.new("UICorner", avatarImg).CornerRadius = UDim.new(1, 0)
+
+		local ownerLbl = Instance.new("TextLabel")
+		ownerLbl.Size = UDim2.new(1, -26, 1, 0)
+		ownerLbl.Position = UDim2.new(0, 24, 0, 0)
+		ownerLbl.BackgroundTransparency = 1
+		ownerLbl.Text = data.OwnerName or "Inconnu"
+		ownerLbl.TextColor3 = Color3.fromRGB(180, 180, 200)
+		ownerLbl.TextSize = 12
+		ownerLbl.Font = Enum.Font.Gotham
+		ownerLbl.TextXAlignment = Enum.TextXAlignment.Left
+		ownerLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		ownerLbl.Parent = ownerFrame
+
+		if data.OwnerName then
+			task.spawn(function()
+				local ownerPlr = nil
+				for _, plr in ipairs(Players:GetPlayers()) do
+					if plr.DisplayName == data.OwnerName or plr.Name == data.OwnerName then
+						ownerPlr = plr
+						break
+					end
+				end
+				if ownerPlr then
+					local ok, thumb = pcall(function()
+						return Players:GetUserThumbnailAsync(
+							ownerPlr.UserId,
+							Enum.ThumbnailType.HeadShot,
+							Enum.ThumbnailSize.Size48x48
+						)
+					end)
+					if ok and thumb and avatarImg and avatarImg.Parent then
+						avatarImg.Image = thumb
+					end
+				end
+			end)
+		end
+	end
+end
+
+local function toggleFPSBoost(enable)
+	if enable then
+		savedData = {}
+		local plots = workspace:FindFirstChild("Plots")
+		local roots = {workspace:FindFirstChild("Debris"), plots}
+		for _, root in ipairs(roots) do
+			if root then
+				for _, obj in ipairs(root:GetDescendants()) do
+					if obj:IsA("BasePart") then
+						table.insert(savedData, {Object = obj, Material = obj.Material, CastShadow = obj.CastShadow, Reflectance = obj.Reflectance})
+						obj.Material = Enum.Material.SmoothPlastic
+						obj.CastShadow = false
+						obj.Reflectance = 0
+					elseif obj:IsA("Texture") or obj:IsA("Decal") then
+						table.insert(savedData, {Object = obj, Texture = obj.Texture})
+						obj.Texture = ""
+					end
+				end
+			end
+		end
+	else
+		for _, data in ipairs(savedData) do
+			if data.Object and data.Object.Parent then
+				if data.Material then
+					data.Object.Material = data.Material
+					data.Object.CastShadow = data.CastShadow
+					data.Object.Reflectance = data.Reflectance or 0
+				elseif data.Texture then
+					data.Object.Texture = data.Texture
+				end
+			end
+		end
+		savedData = {}
+	end
+end
+
+local function getHum()
+	local c = player.Character
+	return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function getRoot()
+	local c = player.Character
+	return c and (c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart)
+end
+
+local function getJumpLaunchY(hum)
+	if not hum then return 50 end
+	if hum.UseJumpPower ~= false and tonumber(hum.JumpPower) and hum.JumpPower > 0 then
+		return hum.JumpPower
+	end
+	local jh = tonumber(hum.JumpHeight)
+	if jh and jh > 0 then return math.sqrt(2 * workspace.Gravity * jh) end
+	return 50
+end
+
+local function launchHumanoid(hum)
+	local root = getRoot()
+	if not hum or not root then return end
+	pcall(function()
+		hum.Sit = false
+		hum.PlatformStand = false
+	end)
+	local launchY = getJumpLaunchY(hum)
+	local vel = root.AssemblyLinearVelocity
+	root.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, launchY), vel.Z)
+end
+
+local function controlledJump(hum, root, targetY)
+	if not hum or not root then return end
+	local diff = targetY - root.Position.Y
+	if diff < 2 then
+		local vel = root.AssemblyLinearVelocity
+		if vel.Y > 10 then root.AssemblyLinearVelocity = Vector3.new(vel.X, vel.Y * 0.4, vel.Z) end
+		return
+	end
+	local needed = math.clamp(diff * 1.8, 25, 55)
+	local vel = root.AssemblyLinearVelocity
+	root.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, needed), vel.Z)
+end
+
+function setInfiniteJump(state)
+	infiniteJumpEnabled = state
+	if JumpConnection then JumpConnection:Disconnect() JumpConnection = nil end
+	if state then
+		JumpConnection = UserInputService.JumpRequest:Connect(function()
+			local hum = getHum()
+			if hum and hum.Health > 0 then launchHumanoid(hum) end
+		end)
+	end
+	setToggleVisual(infiniteJumpToggle, state)
+end
+
+function setSpeedLock(value)
+	currentSpeedLock = value
+	if SpeedConnection then SpeedConnection:Disconnect() SpeedConnection = nil end
+	if value then
+		SpeedConnection = RunService.Heartbeat:Connect(function()
+			local hum = getHum()
+			if hum and hum.Health > 0 then hum.WalkSpeed = value end
+		end)
+		setToggleVisual(speedLockToggle, true)
+	else
+		local hum = getHum()
+		if hum then hum.WalkSpeed = 16 end
+		setToggleVisual(speedLockToggle, false)
+	end
+end
+
+local function applyFOV(value)
+	value = math.clamp(tonumber(value) or 70, 70, 120)
+	customFOV = value
+	fovBox.Text = tostring(value)
+	local cam = workspace.CurrentCamera
+	if cam then
+		cam.FieldOfView = value
+	end
+end
+
+local function clearPathVisuals()
+	for _, v in ipairs(pathVisuals) do
+		if v and v.Parent then pcall(function() v:Destroy() end) end
+	end
+	pathVisuals = {}
+end
+
+local function drawPath(waypoints)
+	clearPathVisuals()
+	if #waypoints < 2 then return end
+	local folder = Instance.new("Folder")
+	folder.Name = "BluePathVisual"
+	folder.Parent = workspace
+	table.insert(pathVisuals, folder)
+	local step = math.max(1, math.floor(#waypoints / 8))
+	for i = 1, #waypoints - 1, step do
+		local nextI = math.min(i + step, #waypoints)
+		local p1 = waypoints[i].Position + Vector3.new(0, 1.5, 0)
+		local p2 = waypoints[nextI].Position + Vector3.new(0, 1.5, 0)
+		local part = Instance.new("Part")
+		part.Anchored = true
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.Material = Enum.Material.Neon
+		part.Color = Color3.fromRGB(0, 170, 255)
+		part.Transparency = 0.3
+		part.Size = Vector3.new(0.5, 0.5, (p1 - p2).Magnitude)
+		part.CFrame = CFrame.lookAt(p1, p2) * CFrame.new(0, 0, -part.Size.Z / 2)
+		part.Parent = folder
+		table.insert(pathVisuals, part)
+	end
+end
+
+local function equipAndUseCloak()
+	if tick() - lastCloakTime < 4 then return end
+	local tool = player.Backpack:FindFirstChild("Invisibility Cloak") or (character and character:FindFirstChild("Invisibility Cloak"))
+	if tool then
+		humanoid:EquipTool(tool)
+		task.wait(0.1)
+		tool:Activate()
+		lastCloakTime = tick()
+	end
+end
+
+-- ========== AUTO LOCK BASE ==========
+local function findLocalPlotBlocks()
+	if tick() - lastPlotCacheTime < 3 and #cachedPlotBlocks > 0 then
+		local valid = {}
+		for _, b in ipairs(cachedPlotBlocks) do
+			if b and b.Parent then table.insert(valid, b) end
+		end
+		if #valid > 0 then return valid end
+	end
+	local results = {}
+	local plots = workspace:FindFirstChild("Plots")
+	if not plots then return results end
+	for _, obj in ipairs(plots:GetDescendants()) do
+		if obj.Name == "Purchases" then
+			local owner = getBaseOwnerDisplayName(obj)
+			if owner and (owner == player.DisplayName or owner == player.Name) then
+				for _, child in ipairs(obj:GetChildren()) do
+					if child.Name == "PlotBlock" and child:IsA("Model") then
+						table.insert(results, child)
+					end
+				end
+			end
+		end
+	end
+	cachedPlotBlocks = results
+	lastPlotCacheTime = tick()
+	return results
+end
+
+local function getRemainingSeconds(plotBlock)
+	local main = plotBlock:FindFirstChild("Main")
+	local bb = main and main:FindFirstChild("BillboardGui")
+	local rt = bb and bb:FindFirstChild("RemainingTime")
+	if not rt then return nil end
+	return tonumber(tostring(rt.Text or ""):match("(%d+)"))
+end
+
+local function getHitbox(plotBlock)
+	return plotBlock:FindFirstChild("Hitbox")
+		or (plotBlock:FindFirstChild("Main") and plotBlock.Main:FindFirstChild("Hitbox"))
+		or plotBlock:FindFirstChildWhichIsA("BasePart")
+end
+
+local function getBlockY(plotBlock)
+	local part = plotBlock:FindFirstChild("Main") or plotBlock:FindFirstChild("Hitbox") or plotBlock:FindFirstChildWhichIsA("BasePart")
+	return part and part.Position.Y or math.huge
+end
+
+local function doLockBaseRush(hitbox)
+	if isLockingBase or not hitbox or not humanoidRootPart then return end
+	if tick() - lastLockBaseTime < 4 then return end
+	isLockingBase = true
+	lastLockBaseTime = tick()
+
+	equipAndUseCloak()
+
+	local path = PathfindingService:CreatePath({
+		AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 8,
+	})
+	local ok = pcall(function() path:ComputeAsync(humanoidRootPart.Position, hitbox.Position) end)
+	local waypoints
+	if ok and path.Status == Enum.PathStatus.Success then
+		waypoints = path:GetWaypoints()
+	else
+		waypoints = {
+			{Position = humanoidRootPart.Position, Action = Enum.PathWaypointAction.Walk},
+			{Position = hitbox.Position, Action = Enum.PathWaypointAction.Walk},
+		}
+	end
+	drawPath(waypoints)
+
+	task.spawn(function()
+		for _, wp in ipairs(waypoints) do
+			if not autoLockBaseEnabled or not humanoidRootPart or not humanoid or humanoid.Health <= 0 then break end
+			if wp.Action == Enum.PathWaypointAction.Jump then launchHumanoid(humanoid) end
+			humanoid:MoveTo(wp.Position)
+			local t0 = tick()
+			while tick() - t0 < 2.5 do
+				if not humanoidRootPart or not autoLockBaseEnabled then break end
+				if (humanoidRootPart.Position - wp.Position).Magnitude < 5 then break end
+				task.wait(0.12)
+			end
+		end
+		if humanoid and hitbox and autoLockBaseEnabled then
+			humanoid:MoveTo(hitbox.Position)
+			task.wait(0.4)
+		end
+		task.wait(0.8)
+		clearPathVisuals()
+		isLockingBase = false
+	end)
+end
+
+local function checkAutoLockBase()
+	if not autoLockBaseEnabled or isLockingBase then return end
+	if tick() - lastLockBaseTime < 3 then return end
+	local blocks = findLocalPlotBlocks()
+	if #blocks == 0 then return end
+	local urgent = {}
+	for _, b in ipairs(blocks) do
+		local secs = getRemainingSeconds(b)
+		if secs and secs <= 5 then table.insert(urgent, b) end
+	end
+	if #urgent == 0 then return end
+	local lowest, lowestY = urgent[1], getBlockY(urgent[1])
+	for i = 2, #urgent do
+		local y = getBlockY(urgent[i])
+		if y < lowestY then lowest, lowestY = urgent[i], y end
+	end
+	local hitbox = getHitbox(lowest)
+	if hitbox then doLockBaseRush(hitbox) end
+end
+
+-- ========== AUTO FONCER ==========
+local function doRush()
+	if isRushing or isLockingBase or not lastBestName or not humanoidRootPart then return end
+	if tick() - lastRushTime < 4 then return end
+	isRushing = true
+	lastRushTime = tick()
+
+	local models = lastBestModels
+	if not models or #models == 0 or not models[1] or not models[1].Parent then
+		models = findModelsInPlots(lastBestName)
+		lastBestModels = models
+	end
+	if #models == 0 then isRushing = false return end
+
+	local targetModel = models[1]
+	local targetPart = targetModel.PrimaryPart or targetModel:FindFirstChildWhichIsA("BasePart")
+	if not targetPart then isRushing = false return end
+
+	equipAndUseCloak()
+
+	local needJump = (targetPart.Position.Y - humanoidRootPart.Position.Y) > 3.5
+	local targetY = targetPart.Position.Y
+	if needJump then setInfiniteJump(true) end
+
+	local path = PathfindingService:CreatePath({
+		AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 8,
+	})
+	local ok = pcall(function() path:ComputeAsync(humanoidRootPart.Position, targetPart.Position) end)
+	local waypoints
+	if ok and path.Status == Enum.PathStatus.Success then
+		waypoints = path:GetWaypoints()
+	else
+		waypoints = {
+			{Position = humanoidRootPart.Position, Action = Enum.PathWaypointAction.Walk},
+			{Position = targetPart.Position, Action = Enum.PathWaypointAction.Walk},
+		}
+	end
+	drawPath(waypoints)
+
+	task.spawn(function()
+		for _, wp in ipairs(waypoints) do
+			if not autoFoncerEnabled or not humanoidRootPart or not humanoid or humanoid.Health <= 0 then break end
+			if wp.Action == Enum.PathWaypointAction.Jump or needJump then
+				controlledJump(humanoid, humanoidRootPart, targetY)
+			end
+			humanoid:MoveTo(wp.Position)
+			local t0 = tick()
+			while tick() - t0 < 2.2 do
+				if not humanoidRootPart or not autoFoncerEnabled then break end
+				if (humanoidRootPart.Position - wp.Position).Magnitude < 5 then break end
+				if needJump then controlledJump(humanoid, humanoidRootPart, targetY) end
+				task.wait(0.12)
+			end
+		end
+		if autoFoncerEnabled and humanoidRootPart then
+			humanoid:MoveTo(targetPart.Position)
+		end
+		task.wait(0.8)
+		clearPathVisuals()
+		if needJump and not infiniteJumpEnabled then setInfiniteJump(false) end
+		isRushing = false
+	end)
+end
+
+local function checkStealNotification()
+	if not autoKickEnabled then return end
+	local notif = playerGui:FindFirstChild("Notification")
+	local frame = notif and notif:FindFirstChild("Notification")
+	if not frame then return end
+	for _, child in ipairs(frame:GetChildren()) do
+		if child.Name == "Template" and (child:IsA("TextLabel") or child:IsA("TextButton")) then
+			if string.find(string.lower(child.Text or ""), "you stole") then
+				player:Kick("Successful Steal!")
+				return
+			end
+		end
+	end
+end
+
+local function rejoinServer()
+	rejoinBtn.Text = "Téléportation..."
+	pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+	task.delay(5, function()
+		if rejoinBtn and rejoinBtn.Parent then rejoinBtn.Text = "Rejoindre un serveur" end
+	end)
+end
+
+-- FPS
+local frames, lastFpsTime = 0, tick()
+RunService.RenderStepped:Connect(function()
+	frames += 1
+	if tick() - lastFpsTime >= 1 then
+		fpsLabel.Text = "FPS: " .. frames
+		frames = 0
+		lastFpsTime = tick()
+	end
+end)
+
+-- ====================== CONNECTIONS ======================
+settingsBtn.MouseButton1Click:Connect(function()
+	settingsFrame.Visible = not settingsFrame.Visible
+end)
+
+closeSettings.MouseButton1Click:Connect(function()
+	settingsFrame.Visible = false
+end)
+
+animalsBtn.MouseButton1Click:Connect(function()
+	animalsFrame.Visible = not animalsFrame.Visible
+	if animalsFrame.Visible then
+		refreshAnimalsList()
+	end
+end)
+
+closeAnimals.MouseButton1Click:Connect(function()
+	animalsFrame.Visible = false
+end)
+
+filterApplyBtn.MouseButton1Click:Connect(function()
+	minFilterValue = parseGeneration(filterBox.Text)
+	refreshAnimalsList()
+end)
+
+filterBox.FocusLost:Connect(function(enter)
+	if enter then
+		minFilterValue = parseGeneration(filterBox.Text)
+		refreshAnimalsList()
+	end
+end)
+
+for i, btn in ipairs(themeButtons) do
+	btn.MouseButton1Click:Connect(function()
+		applyTheme(themes[i])
+		if lastBestName then updateVisuals(lastBestModels) end
+	end)
+end
+
+highlightToggle.MouseButton1Click:Connect(function()
+	highlightEnabled = not highlightEnabled
+	setToggleVisual(highlightToggle, highlightEnabled)
+	updateVisuals(lastBestModels)
+end)
+
+beamToggle.MouseButton1Click:Connect(function()
+	beamEnabled = not beamEnabled
+	setToggleVisual(beamToggle, beamEnabled)
+	updateVisuals(lastBestModels)
+end)
+
+fpsBoostToggle.MouseButton1Click:Connect(function()
+	fpsBoostEnabled = not fpsBoostEnabled
+	setToggleVisual(fpsBoostToggle, fpsBoostEnabled)
+	toggleFPSBoost(fpsBoostEnabled)
+end)
+
+autoKickToggle.MouseButton1Click:Connect(function()
+	autoKickEnabled = not autoKickEnabled
+	setToggleVisual(autoKickToggle, autoKickEnabled)
+end)
+
+infiniteJumpToggle.MouseButton1Click:Connect(function()
+	setInfiniteJump(not infiniteJumpEnabled)
+end)
+
+autoFoncerToggle.MouseButton1Click:Connect(function()
+	autoFoncerEnabled = not autoFoncerEnabled
+	setToggleVisual(autoFoncerToggle, autoFoncerEnabled)
+	if not autoFoncerEnabled then isRushing = false clearPathVisuals() end
+end)
+
+showBaseOwnerToggle.MouseButton1Click:Connect(function()
+	showBaseOwnerEnabled = not showBaseOwnerEnabled
+	setToggleVisual(showBaseOwnerToggle, showBaseOwnerEnabled)
+	if not showBaseOwnerEnabled then clearBaseOwnerVisuals() end
+end)
+
+autoLockBaseToggle.MouseButton1Click:Connect(function()
+	autoLockBaseEnabled = not autoLockBaseEnabled
+	setToggleVisual(autoLockBaseToggle, autoLockBaseEnabled)
+	if not autoLockBaseEnabled then isLockingBase = false clearPathVisuals() end
+end)
+
+disableAnimsToggle.MouseButton1Click:Connect(function()
+	disableAnimsEnabled = not disableAnimsEnabled
+	setToggleVisual(disableAnimsToggle, disableAnimsEnabled)
+	if disableAnimsEnabled then
+		disableAllAnimalAnimations()
+	end
+end)
+
+speedLockToggle.MouseButton1Click:Connect(function()
+	if currentSpeedLock then
+		setSpeedLock(nil)
+	else
+		local v = tonumber(speedBox.Text)
+		setSpeedLock((v and v > 0) and v or 22)
+		if not v or v <= 0 then speedBox.Text = "22" end
+	end
+end)
+
+fovApplyBtn.MouseButton1Click:Connect(function()
+	applyFOV(fovBox.Text)
+end)
+
+fovBox.FocusLost:Connect(function(enter)
+	if enter then applyFOV(fovBox.Text) end
+end)
+
+rejoinBtn.MouseButton1Click:Connect(rejoinServer)
+
+detachBtn.MouseButton1Click:Connect(function()
+	clearVisuals()
+	clearPathVisuals()
+	clearBaseOwnerVisuals()
+	isRushing = false
+	isLockingBase = false
+	setInfiniteJump(false)
+	setSpeedLock(nil)
+	screenGui:Destroy()
+	if script and script.Parent then script:Destroy() end
+end)
+
+-- ====================== PLAYER JOIN / LEAVE ======================
+local function refreshOtherPlayersCount()
+	otherPlayersCount = #Players:GetPlayers() - 1
+end
+
+Players.PlayerAdded:Connect(function()
+	refreshOtherPlayersCount()
+	task.defer(function()
+		pcall(updateAll)
+		if animalsFrame.Visible then
+			task.wait(0.6)
+			refreshAnimalsList()
+		end
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function()
+	task.defer(function()
+		refreshOtherPlayersCount()
+		pcall(updateAll)
+		if animalsFrame.Visible then
+			task.wait(0.4)
+			refreshAnimalsList()
+		end
+	end)
+end)
+
+-- ====================== AUTO START ======================
+applyTheme(themes[1])
+
+-- Paramètres auto (pour tout le monde, sans restriction de pseudo)
+highlightEnabled = true
+setToggleVisual(highlightToggle, true)
+beamEnabled = true
+setToggleVisual(beamToggle, true)
+fpsBoostEnabled = true
+setToggleVisual(fpsBoostToggle, true)
+task.defer(function() task.wait(0.4) toggleFPSBoost(true) end)
+setInfiniteJump(true)
+showBaseOwnerEnabled = true
+setToggleVisual(showBaseOwnerToggle, true)
+autoFoncerEnabled = false
+setToggleVisual(autoFoncerToggle, false)
+autoLockBaseEnabled = false
+setToggleVisual(autoLockBaseToggle, false)
+disableAnimsEnabled = true
+setToggleVisual(disableAnimsToggle, true)
+applyFOV(90)
+print("[AnimalTracker] Auto ON | FOV 90 + Disable Anims")
+
+task.defer(function()
+	pcall(updateAll)
+end)
+
+-- Boucle principale (léger : plus de scan animaux en continu)
+-- updateAll uniquement au join/leave d'un joueur (+ démarrage)
+task.spawn(function()
+	while screenGui.Parent do
+		local cam = workspace.CurrentCamera
+		if cam and math.abs(cam.FieldOfView - customFOV) > 0.5 then
+			cam.FieldOfView = customFOV
+		end
+
+		pcall(checkStealNotification)
+		pcall(checkAutoLockBase)
+
+		if autoFoncerEnabled and not isRushing and not isLockingBase then
+			pcall(doRush)
+		end
+
+		-- Disable animations (moins souvent pour éviter les freezes)
+		if disableAnimsEnabled then
+			pcall(disableAllAnimalAnimations)
+		end
+
+		task.wait(1.2)
+	end
+end)
