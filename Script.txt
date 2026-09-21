@@ -15,6 +15,30 @@ local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 
+-- ====================== CONFIG ======================
+-- Priorité : getgenv().AnimalTrackerConfig (loader) > defaults ci-dessous
+local DEFAULTS = {
+	DEFAULT_FOV = 90,
+	AUTO_OPEN_FRAMES = true,
+	REFRESH_DELAY = 0.5,
+	ALLOWED_PSEUDOS = {},
+}
+
+local external = nil
+pcall(function()
+	external = (getgenv and getgenv().AnimalTrackerConfig) or rawget(_G, "AnimalTrackerConfig")
+end)
+
+local CONFIG = {}
+for k, v in pairs(DEFAULTS) do
+	CONFIG[k] = v
+end
+if type(external) == "table" then
+	for k, v in pairs(external) do
+		CONFIG[k] = v
+	end
+end
+
 -- ====================== STATE ======================
 local highlightEnabled = false
 local beamEnabled = false
@@ -25,8 +49,9 @@ local autoFoncerEnabled = false
 local showBaseOwnerEnabled = false
 local autoLockBaseEnabled = false
 local disableAnimsEnabled = false
+local noPlayerAnimsEnabled = false
 local currentSpeedLock = nil
-local customFOV = 70
+local customFOV = CONFIG.DEFAULT_FOV
 local otherPlayersCount = #Players:GetPlayers() - 1
 local lastAbsoluteBestValue = 0
 
@@ -39,6 +64,7 @@ local lastBestModels = {}
 local savedData = {}
 local JumpConnection = nil
 local SpeedConnection = nil
+local NoPlayerAnimsConnection = nil
 local lastCloakTime = 0
 local pathVisuals = {}
 local isRushing = false
@@ -52,6 +78,21 @@ local baseOwnerBillboard = nil
 local lastBaseOwnerUserId = nil
 local animalsListCache = {}
 local minFilterValue = 0
+
+local function isAllowedPseudo()
+	local list = CONFIG.ALLOWED_PSEUDOS
+	if not list or #list == 0 then
+		return true -- vide = tout le monde
+	end
+	local name = player.Name
+	local dn = player.DisplayName
+	for _, p in ipairs(list) do
+		if p == name or p == dn then
+			return true
+		end
+	end
+	return false
+end
 
 -- Son nouveau meilleur animal
 local newBestSound = Instance.new("Sound")
@@ -70,6 +111,10 @@ player.CharacterAdded:Connect(function(char)
 	if infiniteJumpEnabled then
 		task.wait(0.3)
 		setInfiniteJump(true)
+	end
+	if noPlayerAnimsEnabled then
+		task.wait(0.3)
+		disablePlayerAnimations()
 	end
 end)
 
@@ -165,8 +210,8 @@ Instance.new("UICorner", settingsBtn).CornerRadius = UDim.new(0, 8)
 
 -- ====================== SETTINGS FRAME ======================
 local settingsFrame = Instance.new("Frame")
-settingsFrame.Size = UDim2.new(0, 300, 0, 660)
-settingsFrame.Position = UDim2.new(0.5, -150, 0, 110)
+settingsFrame.Size = UDim2.new(0, 300, 0, 700)
+settingsFrame.Position = UDim2.new(1, -312, 0.5, -350)
 settingsFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 settingsFrame.BorderSizePixel = 0
 settingsFrame.Visible = false
@@ -247,10 +292,11 @@ local autoFoncerToggle = createToggle("Auto Foncer", 275)
 local showBaseOwnerToggle = createToggle("Show Base Owner", 313)
 local autoLockBaseToggle = createToggle("Auto Lock Base", 351)
 local disableAnimsToggle = createToggle("Disable Anims", 389)
+local noPlayerAnimsToggle = createToggle("No Player Anims", 427)
 
 local speedLabel = Instance.new("TextLabel")
 speedLabel.Size = UDim2.new(0.4, 0, 0, 28)
-speedLabel.Position = UDim2.new(0, 12, 0, 427)
+speedLabel.Position = UDim2.new(0, 12, 0, 465)
 speedLabel.BackgroundTransparency = 1
 speedLabel.Text = "Speed :"
 speedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -261,7 +307,7 @@ speedLabel.Parent = settingsFrame
 
 local speedBox = Instance.new("TextBox")
 speedBox.Size = UDim2.new(0, 55, 0, 26)
-speedBox.Position = UDim2.new(0, 70, 0, 428)
+speedBox.Position = UDim2.new(0, 70, 0, 466)
 speedBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
 speedBox.Text = "22"
 speedBox.TextColor3 = Color3.new(1, 1, 1)
@@ -273,7 +319,7 @@ Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 6)
 
 local speedLockToggle = Instance.new("TextButton")
 speedLockToggle.Size = UDim2.new(0, 60, 0, 26)
-speedLockToggle.Position = UDim2.new(1, -75, 0, 428)
+speedLockToggle.Position = UDim2.new(1, -75, 0, 466)
 speedLockToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
 speedLockToggle.Text = "OFF"
 speedLockToggle.TextColor3 = Color3.new(1, 1, 1)
@@ -284,7 +330,7 @@ Instance.new("UICorner", speedLockToggle).CornerRadius = UDim.new(0, 6)
 
 local fovLabel = Instance.new("TextLabel")
 fovLabel.Size = UDim2.new(0.4, 0, 0, 28)
-fovLabel.Position = UDim2.new(0, 12, 0, 466)
+fovLabel.Position = UDim2.new(0, 12, 0, 504)
 fovLabel.BackgroundTransparency = 1
 fovLabel.Text = "FOV :"
 fovLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -295,9 +341,9 @@ fovLabel.Parent = settingsFrame
 
 local fovBox = Instance.new("TextBox")
 fovBox.Size = UDim2.new(0, 55, 0, 26)
-fovBox.Position = UDim2.new(0, 70, 0, 467)
+fovBox.Position = UDim2.new(0, 70, 0, 505)
 fovBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
-fovBox.Text = "70"
+fovBox.Text = tostring(CONFIG.DEFAULT_FOV)
 fovBox.TextColor3 = Color3.new(1, 1, 1)
 fovBox.TextSize = 14
 fovBox.Font = Enum.Font.GothamBold
@@ -307,7 +353,7 @@ Instance.new("UICorner", fovBox).CornerRadius = UDim.new(0, 6)
 
 local fovApplyBtn = Instance.new("TextButton")
 fovApplyBtn.Size = UDim2.new(0, 60, 0, 26)
-fovApplyBtn.Position = UDim2.new(1, -75, 0, 467)
+fovApplyBtn.Position = UDim2.new(1, -75, 0, 505)
 fovApplyBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
 fovApplyBtn.Text = "Apply"
 fovApplyBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -318,7 +364,7 @@ Instance.new("UICorner", fovApplyBtn).CornerRadius = UDim.new(0, 6)
 
 local rejoinBtn = Instance.new("TextButton")
 rejoinBtn.Size = UDim2.new(0.85, 0, 0, 32)
-rejoinBtn.Position = UDim2.new(0.075, 0, 0, 515)
+rejoinBtn.Position = UDim2.new(0.075, 0, 0, 555)
 rejoinBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
 rejoinBtn.Text = "Rejoindre un serveur"
 rejoinBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -329,7 +375,7 @@ Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 8)
 
 local detachBtn = Instance.new("TextButton")
 detachBtn.Size = UDim2.new(0.85, 0, 0, 32)
-detachBtn.Position = UDim2.new(0.075, 0, 0, 557)
+detachBtn.Position = UDim2.new(0.075, 0, 0, 597)
 detachBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
 detachBtn.Text = "Détacher Script"
 detachBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -352,7 +398,7 @@ Instance.new("UICorner", closeSettings).CornerRadius = UDim.new(0, 8)
 -- ====================== ANIMALS FRAME ======================
 local animalsFrame = Instance.new("Frame")
 animalsFrame.Size = UDim2.new(0, 420, 0, 520)
-animalsFrame.Position = UDim2.new(0.5, -210, 0, 110)
+animalsFrame.Position = UDim2.new(0, 12, 0.5, -260)
 animalsFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 animalsFrame.BorderSizePixel = 0
 animalsFrame.Visible = false
@@ -408,6 +454,17 @@ filterApplyBtn.TextSize = 13
 filterApplyBtn.Font = Enum.Font.GothamBold
 filterApplyBtn.Parent = animalsFrame
 Instance.new("UICorner", filterApplyBtn).CornerRadius = UDim.new(0, 6)
+
+local refreshBestBtn = Instance.new("TextButton")
+refreshBestBtn.Size = UDim2.new(0, 130, 0, 26)
+refreshBestBtn.Position = UDim2.new(0, 260, 0, 41)
+refreshBestBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 100)
+refreshBestBtn.Text = "Refresh Meilleur"
+refreshBestBtn.TextColor3 = Color3.new(1, 1, 1)
+refreshBestBtn.TextSize = 12
+refreshBestBtn.Font = Enum.Font.GothamBold
+refreshBestBtn.Parent = animalsFrame
+Instance.new("UICorner", refreshBestBtn).CornerRadius = UDim.new(0, 6)
 
 local animalsScroll = Instance.new("ScrollingFrame")
 animalsScroll.Size = UDim2.new(1, -20, 1, -120)
@@ -557,7 +614,9 @@ end
 local function findBestFromDebris()
 	local debris = workspace:FindFirstChild("Debris")
 	if not debris then return nil, nil, nil, 0 end
-	local candidates = {}
+
+	-- Agrège par nom : on garde la meilleure gen pour chaque nom unique
+	local bestByName = {}
 	for _, template in ipairs(debris:GetChildren()) do
 		if template.Name == "FastOverheadTemplate" then
 			local ao = template:FindFirstChild("AnimalOverhead")
@@ -565,20 +624,36 @@ local function findBestFromDebris()
 				local gen = ao:FindFirstChild("Generation")
 				local dn = ao:FindFirstChild("DisplayName")
 				if gen and gen:IsA("TextLabel") and dn and dn:IsA("TextLabel") then
-					table.insert(candidates, {Name = dn.Text, GenText = gen.Text, Value = parseGeneration(gen.Text)})
+					local name = dn.Text
+					if name and name ~= "" then
+						local val = parseGeneration(gen.Text)
+						local prev = bestByName[name]
+						if not prev or val > prev.Value then
+							bestByName[name] = {Name = name, GenText = gen.Text, Value = val}
+						end
+					end
 				end
 			end
 		end
 	end
-	table.sort(candidates, function(a,b) return a.Value > b.Value end)
+
+	local candidates = {}
+	for _, c in pairs(bestByName) do
+		table.insert(candidates, c)
+	end
+	table.sort(candidates, function(a, b) return a.Value > b.Value end)
+
+	-- Premier animal qui a au moins un modèle en plot NON possédé par nous
 	for _, c in ipairs(candidates) do
 		local models = findModelsInPlots(c.Name)
-		if #models > 0 then
-			local ours = false
-			for _, m in ipairs(models) do
-				if isOwnedByLocalPlayer(m) then ours = true break end
+		local stealable = {}
+		for _, m in ipairs(models) do
+			if m and m.Parent and not isOwnedByLocalPlayer(m) then
+				table.insert(stealable, m)
 			end
-			if not ours then return c.Name, c.GenText, models, c.Value end
+		end
+		if #stealable > 0 then
+			return c.Name, c.GenText, stealable, c.Value
 		end
 	end
 	return nil, nil, nil, 0
@@ -707,6 +782,35 @@ local function disableAllAnimalAnimations()
 	end
 end
 
+local function disablePlayerAnimations()
+	local char = player.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then return end
+	for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+		pcall(function() track:Stop(0) end)
+	end
+end
+
+local function setNoPlayerAnims(state)
+	noPlayerAnimsEnabled = state
+	setToggleVisual(noPlayerAnimsToggle, state)
+	if NoPlayerAnimsConnection then
+		NoPlayerAnimsConnection:Disconnect()
+		NoPlayerAnimsConnection = nil
+	end
+	if state then
+		-- Boucle continue : coupe les anims du joueur chaque frame
+		NoPlayerAnimsConnection = RunService.Heartbeat:Connect(function()
+			if not noPlayerAnimsEnabled then return end
+			disablePlayerAnimations()
+		end)
+		disablePlayerAnimations()
+	end
+end
+
 local function updateAll()
 	local absName, absGenText, absModels, absValue = findBestFromDebris()
 
@@ -725,9 +829,28 @@ local function updateAll()
 	if useName then
 		nameLabel.Text = useName
 		genLabel.Text = "Generation: " .. (useGenText or "-")
+		-- Auto-active No Player Anims quand un meilleur animal (pseudo/nom) est affiché en haut
+		if not noPlayerAnimsEnabled then
+			setNoPlayerAnims(true)
+		end
 	else
 		nameLabel.Text = "Aucun trouvé..."
 		genLabel.Text = "Generation: -"
+	end
+
+	-- Toujours resynchroniser les modèles pour éviter un mauvais animal affiché
+	if useName then
+		local modelsOk = useModels and #useModels > 0 and useModels[1] and useModels[1].Parent
+		if not modelsOk then
+			useModels = findModelsInPlots(useName)
+			local stealable = {}
+			for _, m in ipairs(useModels or {}) do
+				if m and m.Parent and not isOwnedByLocalPlayer(m) then
+					table.insert(stealable, m)
+				end
+			end
+			useModels = stealable
+		end
 	end
 
 	if useName ~= lastBestName or useGenText ~= lastBestGenText then
@@ -735,8 +858,8 @@ local function updateAll()
 		lastBestGenText = useGenText
 		lastBestModels = useModels or {}
 		updateVisuals(lastBestModels)
-	elseif useName and (#lastBestModels == 0 or not lastBestModels[1] or not lastBestModels[1].Parent) then
-		lastBestModels = findModelsInPlots(useName)
+	elseif useName then
+		lastBestModels = useModels or lastBestModels or {}
 		updateVisuals(lastBestModels)
 	end
 
@@ -956,32 +1079,91 @@ end
 local function toggleFPSBoost(enable)
 	if enable then
 		savedData = {}
-		local plots = workspace:FindFirstChild("Plots")
-		local roots = {workspace:FindFirstChild("Debris"), plots}
-		for _, root in ipairs(roots) do
-			if root then
-				for _, obj in ipairs(root:GetDescendants()) do
-					if obj:IsA("BasePart") then
-						table.insert(savedData, {Object = obj, Material = obj.Material, CastShadow = obj.CastShadow, Reflectance = obj.Reflectance})
-						obj.Material = Enum.Material.SmoothPlastic
-						obj.CastShadow = false
-						obj.Reflectance = 0
-					elseif obj:IsA("Texture") or obj:IsA("Decal") then
-						table.insert(savedData, {Object = obj, Texture = obj.Texture})
-						obj.Texture = ""
+
+		-- 1) Supprime TOUS les MaterialVariant du jeu
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("MaterialVariant") or obj.ClassName == "MaterialVariant" then
+				table.insert(savedData, {Object = obj, Kind = "MaterialVariant", Parent = obj.Parent})
+				pcall(function() obj.Parent = nil end)
+			end
+		end
+		-- Aussi dans ReplicatedStorage / Lighting au cas où
+		for _, serviceName in ipairs({"ReplicatedStorage", "Lighting", "MaterialService"}) do
+			local svc = game:FindFirstChild(serviceName)
+			if svc then
+				for _, obj in ipairs(svc:GetDescendants()) do
+					if obj:IsA("MaterialVariant") or obj.ClassName == "MaterialVariant" then
+						table.insert(savedData, {Object = obj, Kind = "MaterialVariant", Parent = obj.Parent})
+						pcall(function() obj.Parent = nil end)
 					end
+				end
+			end
+		end
+
+		-- 2) Plots : material simple (pas de transparency forcée)
+		local plots = workspace:FindFirstChild("Plots")
+		if plots then
+			for _, obj in ipairs(plots:GetDescendants()) do
+				if obj:IsA("BasePart") then
+					table.insert(savedData, {
+						Object = obj,
+						Kind = "Part",
+						Material = obj.Material,
+						CastShadow = obj.CastShadow,
+						Reflectance = obj.Reflectance,
+					})
+					obj.Material = Enum.Material.SmoothPlastic
+					obj.CastShadow = false
+					obj.Reflectance = 0
+				elseif obj:IsA("Texture") or obj:IsA("Decal") then
+					table.insert(savedData, {Object = obj, Kind = "Texture", Texture = obj.Texture})
+					obj.Texture = ""
+				elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+					table.insert(savedData, {Object = obj, Kind = "Effect", Enabled = obj.Enabled})
+					obj.Enabled = false
+				end
+			end
+		end
+
+		-- 3) Debris : allègement
+		local debris = workspace:FindFirstChild("Debris")
+		if debris then
+			for _, obj in ipairs(debris:GetDescendants()) do
+				if obj:IsA("BasePart") then
+					table.insert(savedData, {
+						Object = obj,
+						Kind = "Part",
+						Material = obj.Material,
+						CastShadow = obj.CastShadow,
+						Reflectance = obj.Reflectance,
+					})
+					obj.Material = Enum.Material.SmoothPlastic
+					obj.CastShadow = false
+					obj.Reflectance = 0
+				elseif obj:IsA("Texture") or obj:IsA("Decal") then
+					table.insert(savedData, {Object = obj, Kind = "Texture", Texture = obj.Texture})
+					obj.Texture = ""
 				end
 			end
 		end
 	else
 		for _, data in ipairs(savedData) do
-			if data.Object and data.Object.Parent then
-				if data.Material then
-					data.Object.Material = data.Material
-					data.Object.CastShadow = data.CastShadow
-					data.Object.Reflectance = data.Reflectance or 0
-				elseif data.Texture then
-					data.Object.Texture = data.Texture
+			local obj = data.Object
+			if obj then
+				if data.Kind == "MaterialVariant" then
+					if data.Parent and data.Parent.Parent then
+						pcall(function() obj.Parent = data.Parent end)
+					end
+				elseif obj.Parent then
+					if data.Kind == "Part" then
+						obj.Material = data.Material
+						obj.CastShadow = data.CastShadow
+						obj.Reflectance = data.Reflectance or 0
+					elseif data.Kind == "Texture" then
+						obj.Texture = data.Texture
+					elseif data.Kind == "Effect" then
+						obj.Enabled = data.Enabled
+					end
 				end
 			end
 		end
@@ -1420,6 +1602,19 @@ disableAnimsToggle.MouseButton1Click:Connect(function()
 	end
 end)
 
+noPlayerAnimsToggle.MouseButton1Click:Connect(function()
+	setNoPlayerAnims(not noPlayerAnimsEnabled)
+end)
+
+refreshBestBtn.MouseButton1Click:Connect(function()
+	refreshBestBtn.Text = "..."
+	pcall(updateAll)
+	if animalsFrame.Visible then
+		refreshAnimalsList()
+	end
+	refreshBestBtn.Text = "Refresh Meilleur"
+end)
+
 speedLockToggle.MouseButton1Click:Connect(function()
 	if currentSpeedLock then
 		setSpeedLock(nil)
@@ -1448,6 +1643,7 @@ detachBtn.MouseButton1Click:Connect(function()
 	isLockingBase = false
 	setInfiniteJump(false)
 	setSpeedLock(nil)
+	setNoPlayerAnims(false)
 	screenGui:Destroy()
 	if script and script.Parent then script:Destroy() end
 end)
@@ -1459,21 +1655,21 @@ end
 
 Players.PlayerAdded:Connect(function()
 	refreshOtherPlayersCount()
-	task.defer(function()
+	task.spawn(function()
+		task.wait(CONFIG.REFRESH_DELAY)
 		pcall(updateAll)
 		if animalsFrame.Visible then
-			task.wait(0.6)
 			refreshAnimalsList()
 		end
 	end)
 end)
 
 Players.PlayerRemoving:Connect(function()
-	task.defer(function()
+	task.spawn(function()
+		task.wait(CONFIG.REFRESH_DELAY)
 		refreshOtherPlayersCount()
 		pcall(updateAll)
 		if animalsFrame.Visible then
-			task.wait(0.4)
 			refreshAnimalsList()
 		end
 	end)
@@ -1482,33 +1678,49 @@ end)
 -- ====================== AUTO START ======================
 applyTheme(themes[1])
 
--- Paramètres auto (pour tout le monde, sans restriction de pseudo)
-highlightEnabled = true
-setToggleVisual(highlightToggle, true)
-beamEnabled = true
-setToggleVisual(beamToggle, true)
-fpsBoostEnabled = true
-setToggleVisual(fpsBoostToggle, true)
-task.defer(function() task.wait(0.4) toggleFPSBoost(true) end)
-setInfiniteJump(true)
-showBaseOwnerEnabled = true
-setToggleVisual(showBaseOwnerToggle, true)
-autoFoncerEnabled = false
-setToggleVisual(autoFoncerToggle, false)
-autoLockBaseEnabled = false
-setToggleVisual(autoLockBaseToggle, false)
-disableAnimsEnabled = true
-setToggleVisual(disableAnimsToggle, true)
-applyFOV(90)
-print("[AnimalTracker] Auto ON | FOV 90 + Disable Anims")
+-- Paramètres auto : si ALLOWED_PSEUDOS est vide = tout le monde, sinon seulement les pseudos listés
+local canAuto = isAllowedPseudo()
+if canAuto then
+	highlightEnabled = true
+	setToggleVisual(highlightToggle, true)
+	beamEnabled = true
+	setToggleVisual(beamToggle, true)
+	fpsBoostEnabled = true
+	setToggleVisual(fpsBoostToggle, true)
+	task.defer(function() task.wait(0.4) toggleFPSBoost(true) end)
+	setInfiniteJump(true)
+	showBaseOwnerEnabled = true
+	setToggleVisual(showBaseOwnerToggle, true)
+	autoFoncerEnabled = false
+	setToggleVisual(autoFoncerToggle, false)
+	autoLockBaseEnabled = false
+	setToggleVisual(autoLockBaseToggle, false)
+	disableAnimsEnabled = true
+	setToggleVisual(disableAnimsToggle, true)
+	setNoPlayerAnims(true) -- ON en loop dès le start si pseudo OK
+	applyFOV(CONFIG.DEFAULT_FOV)
+
+	-- Tout apparaît pour les pseudos autorisés
+	if CONFIG.AUTO_OPEN_FRAMES then
+		animalsFrame.Visible = true
+		settingsFrame.Visible = true
+		task.defer(function()
+			task.wait(0.3)
+			refreshAnimalsList()
+		end)
+	end
+	print("[AnimalTracker] Auto ON | FOV " .. tostring(CONFIG.DEFAULT_FOV) .. " | Pseudo autorisé — tout affiché")
+else
+	print("[AnimalTracker] Pseudo non autorisé — paramètres auto désactivés (GUI dispo via boutons)")
+end
 
 task.defer(function()
 	pcall(updateAll)
 end)
 
--- Boucle principale (léger : plus de scan animaux en continu)
--- updateAll uniquement au join/leave d'un joueur (+ démarrage)
+-- Boucle principale
 task.spawn(function()
+	local lastBestRefresh = 0
 	while screenGui.Parent do
 		local cam = workspace.CurrentCamera
 		if cam and math.abs(cam.FieldOfView - customFOV) > 0.5 then
@@ -1522,9 +1734,18 @@ task.spawn(function()
 			pcall(doRush)
 		end
 
-		-- Disable animations (moins souvent pour éviter les freezes)
 		if disableAnimsEnabled then
 			pcall(disableAllAnimalAnimations)
+		end
+
+		if noPlayerAnimsEnabled then
+			pcall(disablePlayerAnimations)
+		end
+
+		-- Refresh périodique du meilleur animal (évite le mauvais animal bloqué)
+		if tick() - lastBestRefresh >= 3 then
+			lastBestRefresh = tick()
+			pcall(updateAll)
 		end
 
 		task.wait(1.2)
