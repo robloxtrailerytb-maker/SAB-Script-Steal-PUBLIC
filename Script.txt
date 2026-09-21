@@ -20,6 +20,7 @@ local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 local DEFAULTS = {
 	DEFAULT_FOV = 90,
 	AUTO_OPEN_FRAMES = true,
+	AUTO_FPS_BOOST = true,   -- active le FPS Booster au démarrage
 	REFRESH_DELAY = 0.5,
 	ALLOWED_PSEUDOS = {},
 }
@@ -1079,95 +1080,127 @@ end
 local function toggleFPSBoost(enable)
 	if enable then
 		savedData = {}
-
-		-- 1) Supprime TOUS les MaterialVariant du jeu
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			if obj:IsA("MaterialVariant") or obj.ClassName == "MaterialVariant" then
-				table.insert(savedData, {Object = obj, Kind = "MaterialVariant", Parent = obj.Parent})
-				pcall(function() obj.Parent = nil end)
+		-- Traitement par lots pour éviter un long freeze (max ~2-3s)
+		task.spawn(function()
+			local BATCH = 250
+			local n = 0
+			local function yieldBatch()
+				n = n + 1
+				if n % BATCH == 0 then
+					task.wait()
+				end
 			end
-		end
-		-- Aussi dans ReplicatedStorage / Lighting au cas où
-		for _, serviceName in ipairs({"ReplicatedStorage", "Lighting", "MaterialService"}) do
-			local svc = game:FindFirstChild(serviceName)
-			if svc then
-				for _, obj in ipairs(svc:GetDescendants()) do
-					if obj:IsA("MaterialVariant") or obj.ClassName == "MaterialVariant" then
-						table.insert(savedData, {Object = obj, Kind = "MaterialVariant", Parent = obj.Parent})
-						pcall(function() obj.Parent = nil end)
+
+			-- 1) MaterialVariant (MaterialService + racines limitées, pas tout workspace)
+			local roots = {}
+			local ms = game:FindFirstChild("MaterialService")
+			if ms then table.insert(roots, ms) end
+			local plots = workspace:FindFirstChild("Plots")
+			if plots then table.insert(roots, plots) end
+			local debris = workspace:FindFirstChild("Debris")
+			if debris then table.insert(roots, debris) end
+			for _, svcName in ipairs({"ReplicatedStorage", "Lighting"}) do
+				local svc = game:FindFirstChild(svcName)
+				if svc then table.insert(roots, svc) end
+			end
+
+			for _, root in ipairs(roots) do
+				local ok, desc = pcall(function() return root:GetDescendants() end)
+				if ok and desc then
+					for _, obj in ipairs(desc) do
+						if obj:IsA("MaterialVariant") or obj.ClassName == "MaterialVariant" then
+							table.insert(savedData, {Object = obj, Kind = "MaterialVariant", Parent = obj.Parent})
+							pcall(function() obj.Parent = nil end)
+							yieldBatch()
+						end
 					end
 				end
 			end
-		end
 
-		-- 2) Plots : material simple (pas de transparency forcée)
-		local plots = workspace:FindFirstChild("Plots")
-		if plots then
-			for _, obj in ipairs(plots:GetDescendants()) do
-				if obj:IsA("BasePart") then
-					table.insert(savedData, {
-						Object = obj,
-						Kind = "Part",
-						Material = obj.Material,
-						CastShadow = obj.CastShadow,
-						Reflectance = obj.Reflectance,
-					})
-					obj.Material = Enum.Material.SmoothPlastic
-					obj.CastShadow = false
-					obj.Reflectance = 0
-				elseif obj:IsA("Texture") or obj:IsA("Decal") then
-					table.insert(savedData, {Object = obj, Kind = "Texture", Texture = obj.Texture})
-					obj.Texture = ""
-				elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
-					table.insert(savedData, {Object = obj, Kind = "Effect", Enabled = obj.Enabled})
-					obj.Enabled = false
+			-- 2) Plots : material simple
+			if plots then
+				local ok, desc = pcall(function() return plots:GetDescendants() end)
+				if ok and desc then
+					for _, obj in ipairs(desc) do
+						if obj:IsA("BasePart") then
+							table.insert(savedData, {
+								Object = obj,
+								Kind = "Part",
+								Material = obj.Material,
+								CastShadow = obj.CastShadow,
+								Reflectance = obj.Reflectance,
+							})
+							obj.Material = Enum.Material.SmoothPlastic
+							obj.CastShadow = false
+							obj.Reflectance = 0
+							yieldBatch()
+						elseif obj:IsA("Texture") or obj:IsA("Decal") then
+							table.insert(savedData, {Object = obj, Kind = "Texture", Texture = obj.Texture})
+							obj.Texture = ""
+							yieldBatch()
+						elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+							table.insert(savedData, {Object = obj, Kind = "Effect", Enabled = obj.Enabled})
+							obj.Enabled = false
+							yieldBatch()
+						end
+					end
 				end
 			end
-		end
 
-		-- 3) Debris : allègement
-		local debris = workspace:FindFirstChild("Debris")
-		if debris then
-			for _, obj in ipairs(debris:GetDescendants()) do
-				if obj:IsA("BasePart") then
-					table.insert(savedData, {
-						Object = obj,
-						Kind = "Part",
-						Material = obj.Material,
-						CastShadow = obj.CastShadow,
-						Reflectance = obj.Reflectance,
-					})
-					obj.Material = Enum.Material.SmoothPlastic
-					obj.CastShadow = false
-					obj.Reflectance = 0
-				elseif obj:IsA("Texture") or obj:IsA("Decal") then
-					table.insert(savedData, {Object = obj, Kind = "Texture", Texture = obj.Texture})
-					obj.Texture = ""
+			-- 3) Debris : allègement léger
+			if debris then
+				local ok, desc = pcall(function() return debris:GetDescendants() end)
+				if ok and desc then
+					for _, obj in ipairs(desc) do
+						if obj:IsA("BasePart") then
+							table.insert(savedData, {
+								Object = obj,
+								Kind = "Part",
+								Material = obj.Material,
+								CastShadow = obj.CastShadow,
+								Reflectance = obj.Reflectance,
+							})
+							obj.Material = Enum.Material.SmoothPlastic
+							obj.CastShadow = false
+							obj.Reflectance = 0
+							yieldBatch()
+						elseif obj:IsA("Texture") or obj:IsA("Decal") then
+							table.insert(savedData, {Object = obj, Kind = "Texture", Texture = obj.Texture})
+							obj.Texture = ""
+							yieldBatch()
+						end
+					end
 				end
 			end
-		end
+		end)
 	else
-		for _, data in ipairs(savedData) do
-			local obj = data.Object
-			if obj then
-				if data.Kind == "MaterialVariant" then
-					if data.Parent and data.Parent.Parent then
-						pcall(function() obj.Parent = data.Parent end)
-					end
-				elseif obj.Parent then
-					if data.Kind == "Part" then
-						obj.Material = data.Material
-						obj.CastShadow = data.CastShadow
-						obj.Reflectance = data.Reflectance or 0
-					elseif data.Kind == "Texture" then
-						obj.Texture = data.Texture
-					elseif data.Kind == "Effect" then
-						obj.Enabled = data.Enabled
+		task.spawn(function()
+			local BATCH = 300
+			for i, data in ipairs(savedData) do
+				local obj = data.Object
+				if obj then
+					if data.Kind == "MaterialVariant" then
+						if data.Parent and data.Parent.Parent then
+							pcall(function() obj.Parent = data.Parent end)
+						end
+					elseif obj.Parent then
+						if data.Kind == "Part" then
+							obj.Material = data.Material
+							obj.CastShadow = data.CastShadow
+							obj.Reflectance = data.Reflectance or 0
+						elseif data.Kind == "Texture" then
+							obj.Texture = data.Texture
+						elseif data.Kind == "Effect" then
+							obj.Enabled = data.Enabled
+						end
 					end
 				end
+				if i % BATCH == 0 then
+					task.wait()
+				end
 			end
-		end
-		savedData = {}
+			savedData = {}
+		end)
 	end
 end
 
@@ -1685,9 +1718,14 @@ if canAuto then
 	setToggleVisual(highlightToggle, true)
 	beamEnabled = true
 	setToggleVisual(beamToggle, true)
-	fpsBoostEnabled = true
-	setToggleVisual(fpsBoostToggle, true)
-	task.defer(function() task.wait(0.4) toggleFPSBoost(true) end)
+	if CONFIG.AUTO_FPS_BOOST then
+		fpsBoostEnabled = true
+		setToggleVisual(fpsBoostToggle, true)
+		task.defer(function() task.wait(0.4) toggleFPSBoost(true) end)
+	else
+		fpsBoostEnabled = false
+		setToggleVisual(fpsBoostToggle, false)
+	end
 	setInfiniteJump(true)
 	showBaseOwnerEnabled = true
 	setToggleVisual(showBaseOwnerToggle, true)
