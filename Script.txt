@@ -18,7 +18,7 @@ local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 -- ====================== CONFIG ======================
 -- Priorité : getgenv().AnimalTrackerConfig (loader) > defaults ci-dessous
 local DEFAULTS = {
-	DEFAULT_FOV = 90,
+	DEFAULT_FOV = 120,
 	AUTO_OPEN_FRAMES = true,
 	AUTO_FPS_BOOST = true,   -- active le FPS Booster au démarrage
 	REFRESH_DELAY = 0.5,
@@ -80,6 +80,18 @@ local lastBaseOwnerUserId = nil
 local animalsListCache = {}
 local minFilterValue = 0
 
+-- Modes Carry / Speed
+local currentMode = "Carry"
+local spaceHeld = false
+
+-- Keybinds (rebindables)
+local Keybinds = {
+	TPGround = Enum.KeyCode.E,
+	DropBrainrot = Enum.KeyCode.A,
+	SwitchMode = Enum.KeyCode.R,
+}
+local waitingForRebind = nil
+
 local function isAllowedPseudo()
 	local list = CONFIG.ALLOWED_PSEUDOS
 	if not list or #list == 0 then
@@ -139,6 +151,19 @@ fpsLabel.Font = Enum.Font.GothamBold
 fpsLabel.ZIndex = 50
 fpsLabel.Parent = screenGui
 Instance.new("UICorner", fpsLabel).CornerRadius = UDim.new(0, 8)
+
+local modeLabel = Instance.new("TextLabel")
+modeLabel.Size = UDim2.new(0, 130, 0, 28)
+modeLabel.Position = UDim2.new(1, -240, 0, 12)
+modeLabel.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+modeLabel.BackgroundTransparency = 0.2
+modeLabel.Text = "Mode : Carry"
+modeLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
+modeLabel.TextSize = 15
+modeLabel.Font = Enum.Font.GothamBold
+modeLabel.ZIndex = 50
+modeLabel.Parent = screenGui
+Instance.new("UICorner", modeLabel).CornerRadius = UDim.new(0, 8)
 
 local mainGui = Instance.new("Frame")
 mainGui.Size = UDim2.new(0, 400, 0, 100)
@@ -209,10 +234,11 @@ settingsBtn.TextColor3 = Color3.new(1, 1, 1)
 settingsBtn.Parent = mainGui
 Instance.new("UICorner", settingsBtn).CornerRadius = UDim.new(0, 8)
 
--- ====================== SETTINGS FRAME ======================
+-- ====================== PANEL FRAME ======================
 local settingsFrame = Instance.new("Frame")
-settingsFrame.Size = UDim2.new(0, 300, 0, 700)
-settingsFrame.Position = UDim2.new(1, -312, 0.5, -350)
+settingsFrame.Name = "PanelFrame"
+settingsFrame.Size = UDim2.new(0, 320, 0, 640)
+settingsFrame.Position = UDim2.new(1, -332, 0.5, -320)
 settingsFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 settingsFrame.BorderSizePixel = 0
 settingsFrame.Visible = false
@@ -224,13 +250,52 @@ settingsStroke.Color = Color3.fromRGB(0, 0, 0)
 settingsStroke.Thickness = 2
 
 local settingsTitle = Instance.new("TextLabel")
-settingsTitle.Size = UDim2.new(1, 0, 0, 35)
+settingsTitle.Size = UDim2.new(1, 0, 0, 36)
 settingsTitle.BackgroundTransparency = 1
-settingsTitle.Text = "Paramètres (glisser ici)"
+settingsTitle.Text = "Panel (glisser ici)"
 settingsTitle.TextColor3 = Color3.new(1, 1, 1)
 settingsTitle.TextSize = 18
 settingsTitle.Font = Enum.Font.GothamBold
 settingsTitle.Parent = settingsFrame
+
+-- Onglets
+local tabDivers = Instance.new("TextButton")
+tabDivers.Size = UDim2.new(0.45, 0, 0, 30)
+tabDivers.Position = UDim2.new(0.05, 0, 0, 40)
+tabDivers.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+tabDivers.Text = "Divers"
+tabDivers.TextColor3 = Color3.new(1, 1, 1)
+tabDivers.TextSize = 15
+tabDivers.Font = Enum.Font.GothamBold
+tabDivers.Parent = settingsFrame
+Instance.new("UICorner", tabDivers).CornerRadius = UDim.new(0, 8)
+
+local tabKeybinds = Instance.new("TextButton")
+tabKeybinds.Size = UDim2.new(0.45, 0, 0, 30)
+tabKeybinds.Position = UDim2.new(0.5, 0, 0, 40)
+tabKeybinds.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+tabKeybinds.Text = "Keybinds"
+tabKeybinds.TextColor3 = Color3.new(1, 1, 1)
+tabKeybinds.TextSize = 15
+tabKeybinds.Font = Enum.Font.GothamBold
+tabKeybinds.Parent = settingsFrame
+Instance.new("UICorner", tabKeybinds).CornerRadius = UDim.new(0, 8)
+
+local diversFrame = Instance.new("ScrollingFrame")
+diversFrame.Size = UDim2.new(1, -16, 1, -130)
+diversFrame.Position = UDim2.new(0, 8, 0, 78)
+diversFrame.BackgroundTransparency = 1
+diversFrame.BorderSizePixel = 0
+diversFrame.ScrollBarThickness = 4
+diversFrame.CanvasSize = UDim2.new(0, 0, 0, 620)
+diversFrame.Parent = settingsFrame
+
+local keybindsFrame = Instance.new("Frame")
+keybindsFrame.Size = UDim2.new(1, -16, 1, -130)
+keybindsFrame.Position = UDim2.new(0, 8, 0, 78)
+keybindsFrame.BackgroundTransparency = 1
+keybindsFrame.Visible = false
+keybindsFrame.Parent = settingsFrame
 
 local themes = {
 	{Name = "Sombre", Bg = Color3.fromRGB(18, 18, 22), Accent = Color3.fromRGB(0, 0, 0), Text = Color3.new(1,1,1)},
@@ -244,14 +309,14 @@ local currentTheme = themes[1]
 local themeButtons = {}
 for i, theme in ipairs(themes) do
 	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(0, 52, 0, 28)
-	btn.Position = UDim2.new(0, 10 + (i-1)*56, 0, 42)
+	btn.Size = UDim2.new(0, 52, 0, 26)
+	btn.Position = UDim2.new(0, 4 + (i-1)*58, 0, 4)
 	btn.BackgroundColor3 = theme.Bg
 	btn.Text = theme.Name
 	btn.TextSize = 11
 	btn.Font = Enum.Font.Gotham
 	btn.TextColor3 = theme.Text
-	btn.Parent = settingsFrame
+	btn.Parent = diversFrame
 	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 	local s = Instance.new("UIStroke", btn)
 	s.Color = theme.Accent
@@ -259,135 +324,185 @@ for i, theme in ipairs(themes) do
 	themeButtons[i] = btn
 end
 
-local function createToggle(name, yPos)
+local function createToggle(parent, name, yPos)
 	local label = Instance.new("TextLabel")
 	label.Size = UDim2.new(0.65, 0, 0, 28)
-	label.Position = UDim2.new(0, 12, 0, yPos)
+	label.Position = UDim2.new(0, 8, 0, yPos)
 	label.BackgroundTransparency = 1
 	label.Text = name
 	label.TextColor3 = Color3.fromRGB(200, 200, 200)
 	label.TextSize = 14
 	label.Font = Enum.Font.Gotham
 	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.Parent = settingsFrame
+	label.Parent = parent
 
 	local toggle = Instance.new("TextButton")
 	toggle.Size = UDim2.new(0, 60, 0, 26)
-	toggle.Position = UDim2.new(1, -75, 0, yPos + 1)
+	toggle.Position = UDim2.new(1, -70, 0, yPos + 1)
 	toggle.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
 	toggle.Text = "OFF"
 	toggle.TextColor3 = Color3.new(1, 1, 1)
 	toggle.TextSize = 13
 	toggle.Font = Enum.Font.GothamBold
-	toggle.Parent = settingsFrame
+	toggle.Parent = parent
 	Instance.new("UICorner", toggle).CornerRadius = UDim.new(0, 6)
 	return toggle
 end
 
-local highlightToggle = createToggle("Highlight", 85)
-local beamToggle = createToggle("Beam (trait)", 123)
-local fpsBoostToggle = createToggle("FPS Booster", 161)
-local autoKickToggle = createToggle("AutoKick (Steal)", 199)
-local infiniteJumpToggle = createToggle("Infinite Jump", 237)
-local autoFoncerToggle = createToggle("Auto Foncer", 275)
-local showBaseOwnerToggle = createToggle("Show Base Owner", 313)
-local autoLockBaseToggle = createToggle("Auto Lock Base", 351)
-local disableAnimsToggle = createToggle("Disable Anims", 389)
-local noPlayerAnimsToggle = createToggle("No Player Anims", 427)
+-- Divers toggles
+local highlightToggle = createToggle(diversFrame, "Highlight", 40)
+local beamToggle = createToggle(diversFrame, "Beam (trait)", 72)
+local fpsBoostToggle = createToggle(diversFrame, "FPS Booster", 104)
+local autoKickToggle = createToggle(diversFrame, "AutoKick (Steal)", 136)
+local infiniteJumpToggle = createToggle(diversFrame, "Infinite Jump", 168)
+local autoFoncerToggle = createToggle(diversFrame, "Auto Foncer", 200)
+local showBaseOwnerToggle = createToggle(diversFrame, "Show Base Owner", 232)
+local autoLockBaseToggle = createToggle(diversFrame, "Auto Lock Base", 264)
+local disableAnimsToggle = createToggle(diversFrame, "Disable Anims", 296)
+local noPlayerAnimsToggle = createToggle(diversFrame, "No Player Anims", 328)
 
 local speedLabel = Instance.new("TextLabel")
 speedLabel.Size = UDim2.new(0.4, 0, 0, 28)
-speedLabel.Position = UDim2.new(0, 12, 0, 465)
+speedLabel.Position = UDim2.new(0, 8, 0, 368)
 speedLabel.BackgroundTransparency = 1
 speedLabel.Text = "Speed :"
 speedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 speedLabel.TextSize = 14
 speedLabel.Font = Enum.Font.Gotham
 speedLabel.TextXAlignment = Enum.TextXAlignment.Left
-speedLabel.Parent = settingsFrame
+speedLabel.Parent = diversFrame
 
 local speedBox = Instance.new("TextBox")
 speedBox.Size = UDim2.new(0, 55, 0, 26)
-speedBox.Position = UDim2.new(0, 70, 0, 466)
+speedBox.Position = UDim2.new(0, 70, 0, 369)
 speedBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
 speedBox.Text = "22"
 speedBox.TextColor3 = Color3.new(1, 1, 1)
 speedBox.TextSize = 14
 speedBox.Font = Enum.Font.GothamBold
 speedBox.ClearTextOnFocus = false
-speedBox.Parent = settingsFrame
+speedBox.Parent = diversFrame
 Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 6)
 
 local speedLockToggle = Instance.new("TextButton")
 speedLockToggle.Size = UDim2.new(0, 60, 0, 26)
-speedLockToggle.Position = UDim2.new(1, -75, 0, 466)
+speedLockToggle.Position = UDim2.new(1, -70, 0, 369)
 speedLockToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
 speedLockToggle.Text = "OFF"
 speedLockToggle.TextColor3 = Color3.new(1, 1, 1)
 speedLockToggle.TextSize = 13
 speedLockToggle.Font = Enum.Font.GothamBold
-speedLockToggle.Parent = settingsFrame
+speedLockToggle.Parent = diversFrame
 Instance.new("UICorner", speedLockToggle).CornerRadius = UDim.new(0, 6)
 
 local fovLabel = Instance.new("TextLabel")
 fovLabel.Size = UDim2.new(0.4, 0, 0, 28)
-fovLabel.Position = UDim2.new(0, 12, 0, 504)
+fovLabel.Position = UDim2.new(0, 8, 0, 408)
 fovLabel.BackgroundTransparency = 1
 fovLabel.Text = "FOV :"
 fovLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 fovLabel.TextSize = 14
 fovLabel.Font = Enum.Font.Gotham
 fovLabel.TextXAlignment = Enum.TextXAlignment.Left
-fovLabel.Parent = settingsFrame
+fovLabel.Parent = diversFrame
 
 local fovBox = Instance.new("TextBox")
 fovBox.Size = UDim2.new(0, 55, 0, 26)
-fovBox.Position = UDim2.new(0, 70, 0, 505)
+fovBox.Position = UDim2.new(0, 70, 0, 409)
 fovBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
 fovBox.Text = tostring(CONFIG.DEFAULT_FOV)
 fovBox.TextColor3 = Color3.new(1, 1, 1)
 fovBox.TextSize = 14
 fovBox.Font = Enum.Font.GothamBold
 fovBox.ClearTextOnFocus = false
-fovBox.Parent = settingsFrame
+fovBox.Parent = diversFrame
 Instance.new("UICorner", fovBox).CornerRadius = UDim.new(0, 6)
 
 local fovApplyBtn = Instance.new("TextButton")
 fovApplyBtn.Size = UDim2.new(0, 60, 0, 26)
-fovApplyBtn.Position = UDim2.new(1, -75, 0, 505)
+fovApplyBtn.Position = UDim2.new(1, -70, 0, 409)
 fovApplyBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
 fovApplyBtn.Text = "Apply"
 fovApplyBtn.TextColor3 = Color3.new(1, 1, 1)
 fovApplyBtn.TextSize = 13
 fovApplyBtn.Font = Enum.Font.GothamBold
-fovApplyBtn.Parent = settingsFrame
+fovApplyBtn.Parent = diversFrame
 Instance.new("UICorner", fovApplyBtn).CornerRadius = UDim.new(0, 6)
 
 local rejoinBtn = Instance.new("TextButton")
-rejoinBtn.Size = UDim2.new(0.85, 0, 0, 32)
-rejoinBtn.Position = UDim2.new(0.075, 0, 0, 555)
+rejoinBtn.Size = UDim2.new(0.9, 0, 0, 30)
+rejoinBtn.Position = UDim2.new(0.05, 0, 0, 456)
 rejoinBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
 rejoinBtn.Text = "Rejoindre un serveur"
 rejoinBtn.TextColor3 = Color3.new(1, 1, 1)
 rejoinBtn.TextSize = 14
 rejoinBtn.Font = Enum.Font.GothamBold
-rejoinBtn.Parent = settingsFrame
+rejoinBtn.Parent = diversFrame
 Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 8)
 
 local detachBtn = Instance.new("TextButton")
-detachBtn.Size = UDim2.new(0.85, 0, 0, 32)
-detachBtn.Position = UDim2.new(0.075, 0, 0, 597)
+detachBtn.Size = UDim2.new(0.9, 0, 0, 30)
+detachBtn.Position = UDim2.new(0.05, 0, 0, 496)
 detachBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
 detachBtn.Text = "Détacher Script"
 detachBtn.TextColor3 = Color3.new(1, 1, 1)
-detachBtn.TextSize = 15
+detachBtn.TextSize = 14
 detachBtn.Font = Enum.Font.GothamBold
-detachBtn.Parent = settingsFrame
+detachBtn.Parent = diversFrame
 Instance.new("UICorner", detachBtn).CornerRadius = UDim.new(0, 8)
 
+-- ====================== KEYBINDS UI ======================
+local function createKeybindRow(parent, displayName, keyName, yPos)
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.55, 0, 0, 32)
+	label.Position = UDim2.new(0, 8, 0, yPos)
+	label.BackgroundTransparency = 1
+	label.Text = displayName
+	label.TextColor3 = Color3.fromRGB(200, 200, 200)
+	label.TextSize = 14
+	label.Font = Enum.Font.Gotham
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = parent
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0, 90, 0, 30)
+	btn.Position = UDim2.new(1, -100, 0, yPos + 1)
+	btn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+	btn.Text = Keybinds[keyName].Name
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.TextSize = 14
+	btn.Font = Enum.Font.GothamBold
+	btn.Parent = parent
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+	btn.MouseButton1Click:Connect(function()
+		if waitingForRebind then return end
+		waitingForRebind = keyName
+		btn.Text = "..."
+		btn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+	end)
+	return btn
+end
+
+local tpGroundBtn = createKeybindRow(keybindsFrame, "TP au Sol", "TPGround", 10)
+local dropBrainrotBtn = createKeybindRow(keybindsFrame, "Drop Brainrot", "DropBrainrot", 50)
+local switchModeBtn = createKeybindRow(keybindsFrame, "Switch Mode", "SwitchMode", 90)
+
+local keybindInfo = Instance.new("TextLabel")
+keybindInfo.Size = UDim2.new(1, -16, 0, 120)
+keybindInfo.Position = UDim2.new(0, 8, 0, 140)
+keybindInfo.BackgroundTransparency = 1
+keybindInfo.Text = "Clique une touche puis appuie sur la nouvelle pour rebind.\n\nEspace (hold) = Infinite Jump spam\nR = Carry (base) ↔ Speed (61)\nE = TP au sol\nA = Drop (saut + TP sol)"
+keybindInfo.TextColor3 = Color3.fromRGB(160, 160, 180)
+keybindInfo.TextSize = 13
+keybindInfo.Font = Enum.Font.Gotham
+keybindInfo.TextWrapped = true
+keybindInfo.TextXAlignment = Enum.TextXAlignment.Left
+keybindInfo.Parent = keybindsFrame
+
 local closeSettings = Instance.new("TextButton")
-closeSettings.Size = UDim2.new(0.85, 0, 0, 32)
-closeSettings.Position = UDim2.new(0.075, 0, 1, -42)
+closeSettings.Size = UDim2.new(0.9, 0, 0, 32)
+closeSettings.Position = UDim2.new(0.05, 0, 1, -42)
 closeSettings.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
 closeSettings.Text = "Fermer"
 closeSettings.TextColor3 = Color3.new(1, 1, 1)
@@ -395,6 +510,19 @@ closeSettings.TextSize = 15
 closeSettings.Font = Enum.Font.GothamBold
 closeSettings.Parent = settingsFrame
 Instance.new("UICorner", closeSettings).CornerRadius = UDim.new(0, 8)
+
+tabDivers.MouseButton1Click:Connect(function()
+	diversFrame.Visible = true
+	keybindsFrame.Visible = false
+	tabDivers.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+	tabKeybinds.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+end)
+tabKeybinds.MouseButton1Click:Connect(function()
+	diversFrame.Visible = false
+	keybindsFrame.Visible = true
+	tabKeybinds.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+	tabDivers.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+end)
 
 -- ====================== ANIMALS FRAME ======================
 local animalsFrame = Instance.new("Frame")
@@ -540,8 +668,23 @@ local function applyTheme(theme)
 	animalsBtn.BackgroundColor3 = theme.Bg:Lerp(Color3.new(0.2,0.2,0.2), 0.3)
 	fpsLabel.BackgroundColor3 = theme.Bg
 	fpsLabel.TextColor3 = (theme.Accent == Color3.fromRGB(0,0,0)) and Color3.fromRGB(0,255,150) or theme.Accent
+	modeLabel.BackgroundColor3 = theme.Bg
+	if currentMode == "Carry" then
+		modeLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
+	else
+		modeLabel.TextColor3 = Color3.fromRGB(255, 140, 0)
+	end
 	animalsFrame.BackgroundColor3 = theme.Bg
 	animalsStroke.Color = theme.Accent
+end
+
+local function updateModeLabel()
+	modeLabel.Text = "Mode : " .. currentMode
+	if currentMode == "Carry" then
+		modeLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
+	else
+		modeLabel.TextColor3 = Color3.fromRGB(255, 140, 0)
+	end
 end
 
 local function parseGeneration(text)
@@ -1253,6 +1396,7 @@ function setInfiniteJump(state)
 	infiniteJumpEnabled = state
 	if JumpConnection then JumpConnection:Disconnect() JumpConnection = nil end
 	if state then
+		-- JumpRequest + hold Espace (spaceHeld géré dans Heartbeat)
 		JumpConnection = UserInputService.JumpRequest:Connect(function()
 			local hum = getHum()
 			if hum and hum.Health > 0 then launchHumanoid(hum) end
@@ -1543,6 +1687,93 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+-- ========== MODE / TP / DROP ==========
+local function switchMode()
+	if currentMode == "Carry" then
+		currentMode = "Speed"
+		setSpeedLock(61)
+	else
+		currentMode = "Carry"
+		setSpeedLock(nil)
+	end
+	updateModeLabel()
+end
+
+local function tpToGround()
+	local root = getRoot()
+	local hum = getHum()
+	if not root or not hum then return end
+	local char = player.Character
+	local origin = root.Position
+	local rayParams = RaycastParams.new()
+	rayParams.FilterDescendantsInstances = {char}
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	local result = workspace:Raycast(origin, Vector3.new(0, -500, 0), rayParams)
+	if result then
+		root.CFrame = CFrame.new(result.Position + Vector3.new(0, 3, 0))
+		root.AssemblyLinearVelocity = Vector3.zero
+	else
+		root.CFrame = CFrame.new(origin.X, origin.Y - 50, origin.Z)
+		root.AssemblyLinearVelocity = Vector3.zero
+	end
+end
+
+local function doDropBrainrot()
+	local root = getRoot()
+	local hum = getHum()
+	if not root or not hum or hum.Health <= 0 then return end
+	root.AssemblyLinearVelocity = Vector3.new(0, 180, 0)
+	task.delay(0.28, function()
+		tpToGround()
+	end)
+end
+
+-- ====================== INPUTS (keybinds + space hold) ======================
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if waitingForRebind then
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			Keybinds[waitingForRebind] = input.KeyCode
+			if waitingForRebind == "TPGround" then
+				tpGroundBtn.Text = input.KeyCode.Name
+				tpGroundBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+			elseif waitingForRebind == "DropBrainrot" then
+				dropBrainrotBtn.Text = input.KeyCode.Name
+				dropBrainrotBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+			elseif waitingForRebind == "SwitchMode" then
+				switchModeBtn.Text = input.KeyCode.Name
+				switchModeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+			end
+			waitingForRebind = nil
+		end
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.Space then
+		spaceHeld = true
+	elseif input.KeyCode == Keybinds.TPGround then
+		tpToGround()
+	elseif input.KeyCode == Keybinds.DropBrainrot then
+		doDropBrainrot()
+	elseif input.KeyCode == Keybinds.SwitchMode then
+		switchMode()
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.Space then
+		spaceHeld = false
+	end
+end)
+
+RunService.Heartbeat:Connect(function()
+	if infiniteJumpEnabled and spaceHeld then
+		local hum = getHum()
+		if hum and hum.Health > 0 then
+			launchHumanoid(hum)
+		end
+	end
+end)
+
 -- ====================== CONNECTIONS ======================
 settingsBtn.MouseButton1Click:Connect(function()
 	settingsFrame.Visible = not settingsFrame.Visible
@@ -1737,6 +1968,8 @@ if canAuto then
 	setToggleVisual(disableAnimsToggle, true)
 	setNoPlayerAnims(true) -- ON en loop dès le start si pseudo OK
 	applyFOV(CONFIG.DEFAULT_FOV)
+	currentMode = "Carry"
+	updateModeLabel()
 
 	-- Tout apparaît pour les pseudos autorisés
 	if CONFIG.AUTO_OPEN_FRAMES then
