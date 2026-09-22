@@ -18,9 +18,9 @@ local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 -- ====================== CONFIG ======================
 -- Priorité : getgenv().AnimalTrackerConfig (loader) > defaults ci-dessous
 local DEFAULTS = {
-	DEFAULT_FOV = 120,
-	AUTO_OPEN_FRAMES = true,
-	AUTO_FPS_BOOST = true,   -- active le FPS Booster au démarrage
+	DEFAULT_FOV = 70,
+	AUTO_OPEN_FRAMES = false,
+	AUTO_FPS_BOOST = false,   -- active le FPS Booster au démarrage
 	REFRESH_DELAY = 0.5,
 	ALLOWED_PSEUDOS = {},
 }
@@ -48,6 +48,8 @@ local autoKickEnabled = false
 local infiniteJumpEnabled = false
 local autoFoncerEnabled = false
 local showBaseOwnerEnabled = false
+local showNextBaseEnabled = false
+local godModeEnabled = false
 local autoLockBaseEnabled = false
 local disableAnimsEnabled = false
 local noPlayerAnimsEnabled = false
@@ -77,6 +79,9 @@ local lastPlotCacheTime = 0
 local baseOwnerHighlight = nil
 local baseOwnerBillboard = nil
 local lastBaseOwnerUserId = nil
+local nextBaseHighlight = nil
+local nextBaseBillboard = nil
+local lastNextBaseModel = nil
 local animalsListCache = {}
 local minFilterValue = 0
 
@@ -89,8 +94,13 @@ local Keybinds = {
 	TPGround = Enum.KeyCode.E,
 	DropBrainrot = Enum.KeyCode.A,
 	SwitchMode = Enum.KeyCode.R,
+	Prone = Enum.KeyCode.Z,
 }
 local waitingForRebind = nil
+local proneEnabled = false
+local proneConnection = nil
+local keysDown = {}
+local savedControls = nil
 
 local function isAllowedPseudo()
 	local list = CONFIG.ALLOWED_PSEUDOS
@@ -128,6 +138,14 @@ player.CharacterAdded:Connect(function(char)
 	if noPlayerAnimsEnabled then
 		task.wait(0.3)
 		disablePlayerAnimations()
+	end
+	if proneEnabled then
+		task.wait(0.35)
+		setProne(true)
+	end
+	if godModeEnabled then
+		task.wait(0.2)
+		applyGodMode()
 	end
 end)
 
@@ -287,7 +305,7 @@ diversFrame.Position = UDim2.new(0, 8, 0, 78)
 diversFrame.BackgroundTransparency = 1
 diversFrame.BorderSizePixel = 0
 diversFrame.ScrollBarThickness = 4
-diversFrame.CanvasSize = UDim2.new(0, 0, 0, 620)
+diversFrame.CanvasSize = UDim2.new(0, 0, 0, 760)
 diversFrame.Parent = settingsFrame
 
 local keybindsFrame = Instance.new("Frame")
@@ -357,13 +375,16 @@ local autoKickToggle = createToggle(diversFrame, "AutoKick (Steal)", 136)
 local infiniteJumpToggle = createToggle(diversFrame, "Infinite Jump", 168)
 local autoFoncerToggle = createToggle(diversFrame, "Auto Foncer", 200)
 local showBaseOwnerToggle = createToggle(diversFrame, "Show Base Owner", 232)
-local autoLockBaseToggle = createToggle(diversFrame, "Auto Lock Base", 264)
-local disableAnimsToggle = createToggle(diversFrame, "Disable Anims", 296)
-local noPlayerAnimsToggle = createToggle(diversFrame, "No Player Anims", 328)
+local showNextBaseToggle = createToggle(diversFrame, "Show Next Base", 264)
+local autoLockBaseToggle = createToggle(diversFrame, "Auto Lock Base", 296)
+local disableAnimsToggle = createToggle(diversFrame, "Disable Anims", 328)
+local noPlayerAnimsToggle = createToggle(diversFrame, "No Player Anims", 360)
+local proneToggle = createToggle(diversFrame, "Allongé (sol)", 392)
+local godModeToggle = createToggle(diversFrame, "Anti-Death (God)", 424)
 
 local speedLabel = Instance.new("TextLabel")
 speedLabel.Size = UDim2.new(0.4, 0, 0, 28)
-speedLabel.Position = UDim2.new(0, 8, 0, 368)
+speedLabel.Position = UDim2.new(0, 8, 0, 464)
 speedLabel.BackgroundTransparency = 1
 speedLabel.Text = "Speed :"
 speedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -374,7 +395,7 @@ speedLabel.Parent = diversFrame
 
 local speedBox = Instance.new("TextBox")
 speedBox.Size = UDim2.new(0, 55, 0, 26)
-speedBox.Position = UDim2.new(0, 70, 0, 369)
+speedBox.Position = UDim2.new(0, 70, 0, 465)
 speedBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
 speedBox.Text = "22"
 speedBox.TextColor3 = Color3.new(1, 1, 1)
@@ -386,7 +407,7 @@ Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 6)
 
 local speedLockToggle = Instance.new("TextButton")
 speedLockToggle.Size = UDim2.new(0, 60, 0, 26)
-speedLockToggle.Position = UDim2.new(1, -70, 0, 369)
+speedLockToggle.Position = UDim2.new(1, -70, 0, 465)
 speedLockToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
 speedLockToggle.Text = "OFF"
 speedLockToggle.TextColor3 = Color3.new(1, 1, 1)
@@ -397,7 +418,7 @@ Instance.new("UICorner", speedLockToggle).CornerRadius = UDim.new(0, 6)
 
 local fovLabel = Instance.new("TextLabel")
 fovLabel.Size = UDim2.new(0.4, 0, 0, 28)
-fovLabel.Position = UDim2.new(0, 8, 0, 408)
+fovLabel.Position = UDim2.new(0, 8, 0, 504)
 fovLabel.BackgroundTransparency = 1
 fovLabel.Text = "FOV :"
 fovLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -408,7 +429,7 @@ fovLabel.Parent = diversFrame
 
 local fovBox = Instance.new("TextBox")
 fovBox.Size = UDim2.new(0, 55, 0, 26)
-fovBox.Position = UDim2.new(0, 70, 0, 409)
+fovBox.Position = UDim2.new(0, 70, 0, 505)
 fovBox.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
 fovBox.Text = tostring(CONFIG.DEFAULT_FOV)
 fovBox.TextColor3 = Color3.new(1, 1, 1)
@@ -420,7 +441,7 @@ Instance.new("UICorner", fovBox).CornerRadius = UDim.new(0, 6)
 
 local fovApplyBtn = Instance.new("TextButton")
 fovApplyBtn.Size = UDim2.new(0, 60, 0, 26)
-fovApplyBtn.Position = UDim2.new(1, -70, 0, 409)
+fovApplyBtn.Position = UDim2.new(1, -70, 0, 505)
 fovApplyBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
 fovApplyBtn.Text = "Apply"
 fovApplyBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -431,7 +452,7 @@ Instance.new("UICorner", fovApplyBtn).CornerRadius = UDim.new(0, 6)
 
 local rejoinBtn = Instance.new("TextButton")
 rejoinBtn.Size = UDim2.new(0.9, 0, 0, 30)
-rejoinBtn.Position = UDim2.new(0.05, 0, 0, 456)
+rejoinBtn.Position = UDim2.new(0.05, 0, 0, 552)
 rejoinBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
 rejoinBtn.Text = "Rejoindre un serveur"
 rejoinBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -442,7 +463,7 @@ Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 8)
 
 local detachBtn = Instance.new("TextButton")
 detachBtn.Size = UDim2.new(0.9, 0, 0, 30)
-detachBtn.Position = UDim2.new(0.05, 0, 0, 496)
+detachBtn.Position = UDim2.new(0.05, 0, 0, 592)
 detachBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
 detachBtn.Text = "Détacher Script"
 detachBtn.TextColor3 = Color3.new(1, 1, 1)
@@ -487,12 +508,13 @@ end
 local tpGroundBtn = createKeybindRow(keybindsFrame, "TP au Sol", "TPGround", 10)
 local dropBrainrotBtn = createKeybindRow(keybindsFrame, "Drop Brainrot", "DropBrainrot", 50)
 local switchModeBtn = createKeybindRow(keybindsFrame, "Switch Mode", "SwitchMode", 90)
+local proneKeyBtn = createKeybindRow(keybindsFrame, "Allongé (sol)", "Prone", 130)
 
 local keybindInfo = Instance.new("TextLabel")
-keybindInfo.Size = UDim2.new(1, -16, 0, 120)
-keybindInfo.Position = UDim2.new(0, 8, 0, 140)
+keybindInfo.Size = UDim2.new(1, -16, 0, 140)
+keybindInfo.Position = UDim2.new(0, 8, 0, 180)
 keybindInfo.BackgroundTransparency = 1
-keybindInfo.Text = "Clique une touche puis appuie sur la nouvelle pour rebind.\n\nEspace (hold) = Infinite Jump spam\nR = Carry (base) ↔ Speed (61)\nE = TP au sol\nA = Drop (saut + TP sol)"
+keybindInfo.Text = "Clique une touche puis appuie sur la nouvelle pour rebind.\n\nEspace (hold) = Infinite Jump spam\nR = Carry ↔ Speed (61)\nE = TP au sol\nA = Drop\nZ = Allongé tête au sol (ZQSD/WASD)"
 keybindInfo.TextColor3 = Color3.fromRGB(160, 160, 180)
 keybindInfo.TextSize = 13
 keybindInfo.Font = Enum.Font.Gotham
@@ -896,6 +918,155 @@ local function applyBaseOwnerHighlight(ownerPlayer)
 	Instance.new("UICorner", label).CornerRadius = UDim.new(0, 8)
 
 	lastBaseOwnerUserId = ownerPlayer.UserId
+end
+
+-- ========== SHOW NEXT BASE ==========
+-- Ordre de spawn (WorldPivot positions fournies)
+local BASE_SPAWN_ORDER = {
+	{Order = 1, Pos = Vector3.new(-316.939728, -10.0068617, 113.607002)},
+	{Order = 2, Pos = Vector3.new(-316.939728, -10.0068617, 6.60700226)},
+	{Order = 3, Pos = Vector3.new(-502.252014, -10.0068626, 113.607002)},
+	{Order = 4, Pos = Vector3.new(-502.252014, -10.0068626, 6.60700226)},
+	{Order = 5, Pos = Vector3.new(-316.940002, -10.007, 220.606995)},
+	{Order = 6, Pos = Vector3.new(-502.252014, -10.0068626, 220.606995)},
+	{Order = 7, Pos = Vector3.new(-316.939728, -10.0068617, -100.392998)},
+	{Order = 8, Pos = Vector3.new(-502.252014, 1.99999535, -100.392998)},
+}
+
+local function getPlotWorldPos(plotModel)
+	if not plotModel then return nil end
+	local ok, cf = pcall(function()
+		return plotModel:GetPivot()
+	end)
+	if ok and cf then
+		return cf.Position
+	end
+	local part = plotModel.PrimaryPart or plotModel:FindFirstChildWhichIsA("BasePart", true)
+	return part and part.Position or nil
+end
+
+local function getSpawnOrderForPlot(plotModel)
+	local pos = getPlotWorldPos(plotModel)
+	if not pos then return 999 end
+	local bestOrder, bestDist = 999, math.huge
+	for _, entry in ipairs(BASE_SPAWN_ORDER) do
+		local d = (pos - entry.Pos).Magnitude
+		if d < bestDist then
+			bestDist = d
+			bestOrder = entry.Order
+		end
+	end
+	-- tolérance : si trop loin d'aucun pivot connu, ignore
+	if bestDist > 25 then
+		return 999
+	end
+	return bestOrder
+end
+
+local function isEmptyBase(plotModel)
+	local plotSign = plotModel:FindFirstChild("PlotSign", true)
+	if not plotSign then return false end
+	local gui = plotSign:FindFirstChild("SurfaceGui")
+	local frame = gui and gui:FindFirstChild("Frame")
+	local label = frame and frame:FindFirstChild("TextLabel")
+	if not label or not label:IsA("TextLabel") then return false end
+	local t = (label.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	return t == "Empty Base"
+end
+
+local function clearNextBaseVisuals()
+	if nextBaseHighlight and nextBaseHighlight.Parent then
+		pcall(function() nextBaseHighlight:Destroy() end)
+	end
+	nextBaseHighlight = nil
+	if nextBaseBillboard and nextBaseBillboard.Parent then
+		pcall(function() nextBaseBillboard:Destroy() end)
+	end
+	nextBaseBillboard = nil
+	lastNextBaseModel = nil
+end
+
+local function applyNextBaseVisuals(plotModel)
+	if not plotModel or not plotModel.Parent then return end
+	if lastNextBaseModel == plotModel and nextBaseHighlight and nextBaseHighlight.Parent then
+		return -- déjà affiché
+	end
+	clearNextBaseVisuals()
+
+	-- Highlight violet
+	local h = Instance.new("Highlight")
+	h.Adornee = plotModel
+	h.FillColor = Color3.fromRGB(160, 40, 255)
+	h.OutlineColor = Color3.fromRGB(200, 100, 255)
+	h.FillTransparency = 0.55
+	h.OutlineTransparency = 0
+	h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	h.Parent = plotModel
+	nextBaseHighlight = h
+
+	-- Billboard "Next Base" sur le PlotSign (ou pivot)
+	local adornee = plotModel:FindFirstChild("PlotSign", true)
+	if not adornee then
+		adornee = plotModel.PrimaryPart or plotModel:FindFirstChildWhichIsA("BasePart", true)
+	end
+	if not adornee then return end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "NextBaseBillboard"
+	bb.Adornee = adornee
+	bb.Size = UDim2.new(0, 160, 0, 44)
+	bb.StudsOffset = Vector3.new(0, 6, 0)
+	bb.AlwaysOnTop = true
+	bb.Parent = adornee
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundColor3 = Color3.fromRGB(120, 20, 200)
+	label.BackgroundTransparency = 0.2
+	label.Text = "Next Base"
+	label.TextColor3 = Color3.fromRGB(230, 180, 255)
+	label.TextSize = 18
+	label.Font = Enum.Font.GothamBold
+	label.Parent = bb
+	Instance.new("UICorner", label).CornerRadius = UDim.new(0, 8)
+	local stroke = Instance.new("UIStroke", label)
+	stroke.Color = Color3.fromRGB(200, 100, 255)
+	stroke.Thickness = 1.5
+
+	nextBaseBillboard = bb
+	lastNextBaseModel = plotModel
+end
+
+local function findNextEmptyBase()
+	local plots = workspace:FindFirstChild("Plots")
+	if not plots then return nil end
+
+	local candidates = {}
+	for _, child in ipairs(plots:GetChildren()) do
+		if child:IsA("Model") and isEmptyBase(child) then
+			local order = getSpawnOrderForPlot(child)
+			if order < 999 then
+				table.insert(candidates, {Model = child, Order = order})
+			end
+		end
+	end
+
+	if #candidates == 0 then return nil end
+	table.sort(candidates, function(a, b) return a.Order < b.Order end)
+	return candidates[1].Model, candidates[1].Order
+end
+
+local function updateNextBase()
+	if not showNextBaseEnabled then
+		clearNextBaseVisuals()
+		return
+	end
+	local model = findNextEmptyBase()
+	if model then
+		applyNextBaseVisuals(model)
+	else
+		clearNextBaseVisuals()
+	end
 end
 
 -- ========== DISABLE ANIMATIONS ==========
@@ -1687,6 +1858,209 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+-- ========== ANTI-DEATH (GOD) ==========
+local function applyGodMode()
+	local hum = getHum()
+	if not hum then return end
+	pcall(function()
+		hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+		hum.BreakJointsOnDeath = false
+		if hum.Health < hum.MaxHealth * 0.5 then
+			hum.Health = hum.MaxHealth
+		end
+	end)
+end
+
+local function setGodMode(state)
+	godModeEnabled = state
+	setToggleVisual(godModeToggle, state)
+	if state then applyGodMode() end
+end
+
+-- ========== ALLONGÉ (PRONE) ==========
+local PRONE_HEIGHT = 2.2 -- distance au sol (plus haut = plus loin du sol)
+
+local function unlockMouse()
+	pcall(function()
+		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		UserInputService.MouseIconEnabled = true
+	end)
+end
+
+local function setDefaultControls(enabled)
+	pcall(function()
+		local ps = player:FindFirstChild("PlayerScripts")
+		if not ps then return end
+		local pm = ps:FindFirstChild("PlayerModule")
+		if not pm then return end
+		local ok, mod = pcall(require, pm)
+		if ok and mod and mod.GetControls then
+			local controls = mod:GetControls()
+			if enabled then
+				controls:Enable()
+			else
+				controls:Disable()
+			end
+		end
+	end)
+	-- Toujours déverrouiller la souris (évite le lock après Disable)
+	unlockMouse()
+end
+
+local function stopProneLoop()
+	if proneConnection then
+		proneConnection:Disconnect()
+		proneConnection = nil
+	end
+end
+
+local function applyProneHumanoid(hum)
+	if not hum then return end
+	pcall(function()
+		hum.AutoRotate = false
+		hum.WalkSpeed = 0
+		hum.JumpPower = 0
+		hum.JumpHeight = 0
+		hum.PlatformStand = true
+		hum.Sit = false
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Flying, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+		hum:ChangeState(Enum.HumanoidStateType.Running)
+	end)
+end
+
+local function restoreProneHumanoid(hum)
+	if not hum then return end
+	pcall(function()
+		hum.AutoRotate = true
+		hum.PlatformStand = false
+		hum.WalkSpeed = currentSpeedLock or 16
+		hum.UseJumpPower = true
+		hum.JumpPower = 50
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Flying, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
+		hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+	end)
+end
+
+local function setProne(state)
+	proneEnabled = state
+	setToggleVisual(proneToggle, state)
+	stopProneLoop()
+
+	local hum = getHum()
+	local root = getRoot()
+
+	if state then
+		setDefaultControls(false)
+		unlockMouse()
+		applyProneHumanoid(hum)
+		-- clear residual velocity
+		if root then
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
+		end
+
+		local lastFacing = Vector3.new(0, 0, -1)
+
+		proneConnection = RunService.Heartbeat:Connect(function()
+			if not proneEnabled then return end
+			local hum2 = getHum()
+			local root2 = getRoot()
+			local char2 = player.Character
+			if not hum2 or not root2 or not char2 or hum2.Health <= 0 then return end
+
+			-- garder PlatformStand / états stables (sinon le jeu te relève)
+			if not hum2.PlatformStand then hum2.PlatformStand = true end
+			hum2.WalkSpeed = 0
+			hum2.AutoRotate = false
+			-- empêche le re-lock souris (shiftlock / controls)
+			if UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default then
+				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+				UserInputService.MouseIconEnabled = true
+			end
+
+			local cam = workspace.CurrentCamera
+			local look = cam and cam.CFrame.LookVector or root2.CFrame.LookVector
+			local flatLook = Vector3.new(look.X, 0, look.Z)
+			if flatLook.Magnitude < 0.05 then
+				flatLook = lastFacing
+			else
+				flatLook = flatLook.Unit
+			end
+			local right = Vector3.new(-flatLook.Z, 0, flatLook.X)
+
+			-- ZQSD + WASD — ignore la touche Prone si c'est Z (évite d'avancer en toggle)
+			local move = Vector3.zero
+			local forwardKey = (keysDown[Enum.KeyCode.W] == true)
+				or (keysDown[Enum.KeyCode.Z] == true and Keybinds.Prone ~= Enum.KeyCode.Z)
+			-- Si Prone = Z, on utilise seulement W pour avancer, ou Z seulement si maintenu APRÈS le toggle
+			-- Mieux : Z avance toujours en AZERTY, le toggle est sur Keybinds.Prone à l'InputBegan (edge)
+			if keysDown[Enum.KeyCode.Z] or keysDown[Enum.KeyCode.W] then
+				move = move + flatLook
+			end
+			if keysDown[Enum.KeyCode.S] then
+				move = move - flatLook
+			end
+			if keysDown[Enum.KeyCode.Q] or keysDown[Enum.KeyCode.A] then
+				move = move - right
+			end
+			if keysDown[Enum.KeyCode.D] then
+				move = move + right
+			end
+
+			local speed = (currentSpeedLock and currentSpeedLock > 0) and currentSpeedLock or 16
+			local moving = move.Magnitude > 0.08
+
+			-- Raycast sol pour coller au sol
+			local rayParams = RaycastParams.new()
+			rayParams.FilterDescendantsInstances = {char2}
+			rayParams.FilterType = Enum.RaycastFilterType.Exclude
+			local origin = root2.Position + Vector3.new(0, 3, 0)
+			local hit = workspace:Raycast(origin, Vector3.new(0, -20, 0), rayParams)
+			local pos = root2.Position
+			if hit then
+				pos = Vector3.new(root2.Position.X, hit.Position.Y + PRONE_HEIGHT, root2.Position.Z)
+			end
+
+			if moving then
+				move = move.Unit
+				lastFacing = move
+				root2.AssemblyLinearVelocity = Vector3.new(move.X * speed, 0, move.Z * speed)
+				root2.AssemblyAngularVelocity = Vector3.zero
+				root2.CFrame = CFrame.lookAt(pos, pos + move) * CFrame.Angles(-math.rad(90), 0, 0)
+			else
+				-- IMMMOBILE : zero total (plus de micro-recul)
+				root2.AssemblyLinearVelocity = Vector3.zero
+				root2.AssemblyAngularVelocity = Vector3.zero
+				root2.CFrame = CFrame.lookAt(pos, pos + lastFacing) * CFrame.Angles(-math.rad(90), 0, 0)
+			end
+		end)
+	else
+		setDefaultControls(true)
+		unlockMouse()
+		restoreProneHumanoid(hum)
+		if root then
+			local pos = root.Position
+			local look = root.CFrame.LookVector
+			local flat = Vector3.new(look.X, 0, look.Z)
+			if flat.Magnitude < 0.05 then flat = Vector3.new(0, 0, -1) end
+			flat = flat.Unit
+			root.CFrame = CFrame.lookAt(pos + Vector3.new(0, 2, 0), pos + Vector3.new(0, 2, 0) + flat)
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
+		end
+	end
+end
+
 -- ========== MODE / TP / DROP ==========
 local function switchMode()
 	if currentMode == "Carry" then
@@ -1743,10 +2117,16 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			elseif waitingForRebind == "SwitchMode" then
 				switchModeBtn.Text = input.KeyCode.Name
 				switchModeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+			elseif waitingForRebind == "Prone" then
+				proneKeyBtn.Text = input.KeyCode.Name
+				proneKeyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
 			end
 			waitingForRebind = nil
 		end
 		return
+	end
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		keysDown[input.KeyCode] = true
 	end
 	if input.KeyCode == Enum.KeyCode.Space then
 		spaceHeld = true
@@ -1756,12 +2136,17 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		doDropBrainrot()
 	elseif input.KeyCode == Keybinds.SwitchMode then
 		switchMode()
+	elseif input.KeyCode == Keybinds.Prone then
+		setProne(not proneEnabled)
 	end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
 	if input.KeyCode == Enum.KeyCode.Space then
 		spaceHeld = false
+	end
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		keysDown[input.KeyCode] = nil
 	end
 end)
 
@@ -1852,6 +2237,16 @@ showBaseOwnerToggle.MouseButton1Click:Connect(function()
 	if not showBaseOwnerEnabled then clearBaseOwnerVisuals() end
 end)
 
+showNextBaseToggle.MouseButton1Click:Connect(function()
+	showNextBaseEnabled = not showNextBaseEnabled
+	setToggleVisual(showNextBaseToggle, showNextBaseEnabled)
+	if showNextBaseEnabled then
+		updateNextBase()
+	else
+		clearNextBaseVisuals()
+	end
+end)
+
 autoLockBaseToggle.MouseButton1Click:Connect(function()
 	autoLockBaseEnabled = not autoLockBaseEnabled
 	setToggleVisual(autoLockBaseToggle, autoLockBaseEnabled)
@@ -1868,6 +2263,14 @@ end)
 
 noPlayerAnimsToggle.MouseButton1Click:Connect(function()
 	setNoPlayerAnims(not noPlayerAnimsEnabled)
+end)
+
+proneToggle.MouseButton1Click:Connect(function()
+	setProne(not proneEnabled)
+end)
+
+godModeToggle.MouseButton1Click:Connect(function()
+	setGodMode(not godModeEnabled)
 end)
 
 refreshBestBtn.MouseButton1Click:Connect(function()
@@ -1903,11 +2306,13 @@ detachBtn.MouseButton1Click:Connect(function()
 	clearVisuals()
 	clearPathVisuals()
 	clearBaseOwnerVisuals()
+	clearNextBaseVisuals()
 	isRushing = false
 	isLockingBase = false
 	setInfiniteJump(false)
 	setSpeedLock(nil)
 	setNoPlayerAnims(false)
+	if proneEnabled then setProne(false) end
 	screenGui:Destroy()
 	if script and script.Parent then script:Destroy() end
 end)
@@ -1960,6 +2365,13 @@ if canAuto then
 	setInfiniteJump(true)
 	showBaseOwnerEnabled = true
 	setToggleVisual(showBaseOwnerToggle, true)
+	showNextBaseEnabled = true
+	setToggleVisual(showNextBaseToggle, true)
+	task.defer(function()
+		task.wait(0.5)
+		updateNextBase()
+	end)
+	setGodMode(true) -- AntiDeath toujours ON avec pseudo
 	autoFoncerEnabled = false
 	setToggleVisual(autoFoncerToggle, false)
 	autoLockBaseEnabled = false
@@ -2011,6 +2423,14 @@ task.spawn(function()
 
 		if noPlayerAnimsEnabled then
 			pcall(disablePlayerAnimations)
+		end
+
+		if showNextBaseEnabled then
+			pcall(updateNextBase)
+		end
+
+		if godModeEnabled then
+			pcall(applyGodMode)
 		end
 
 		-- Refresh périodique du meilleur animal (évite le mauvais animal bloqué)
